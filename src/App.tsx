@@ -19,6 +19,10 @@ import {
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem("theme-mode");
+    return saved ? saved === "dark" : true;
+  });
 
   // Backend Data States
   const [signals, setSignals] = useState<SignalsData | null>(null);
@@ -125,6 +129,14 @@ export default function App() {
     setTimeout(() => {
       setToastMessage(null);
     }, 4500);
+  };
+
+  // Theme toggle handler
+  const toggleTheme = () => {
+    const newMode = !isDarkMode;
+    setIsDarkMode(newMode);
+    localStorage.setItem("theme-mode", newMode ? "dark" : "light");
+    document.documentElement.setAttribute("data-theme", newMode ? "dark" : "light");
   };
 
   // 1. Fetch core databases on startup & periodics
@@ -763,9 +775,20 @@ export default function App() {
   ) || [];
 
   return (
-    <div className="flex h-screen overflow-hidden text-on-surface select-none relative font-sans scanline-effect">
+    <div className="flex h-screen overflow-hidden text-on-surface select-none relative font-sans scanline-effect" data-theme={isDarkMode ? "dark" : "light"}>
       {/* Background Dimming Matrix */}
       <div className="fixed inset-0 pointer-events-none z-0 bg-black/45"></div>
+
+      {/* Theme Toggle Button - Top Right */}
+      <button
+        onClick={toggleTheme}
+        className="fixed top-6 right-6 z-40 p-3 rounded-xl bg-white/10 backdrop-blur-xl border border-white/20 hover:bg-white/20 hover:border-white/30 transition-all duration-300 shadow-lg"
+        title={isDarkMode ? "Switch to Light Mode" : "Switch to Dark Mode"}
+      >
+        <span className="material-symbols-outlined text-xl">
+          {isDarkMode ? "light_mode" : "dark_mode"}
+        </span>
+      </button>
 
       {/* Floating Alerts Container */}
       {toastMessage && (
@@ -788,7 +811,7 @@ export default function App() {
       {/* LEFT SIDE NAVIGATION PANEL BAR */}
       <aside className="hidden md:flex flex-col py-0 px-0 glass-panel glass-panel-silver-border w-72 shrink-0 z-30">
         <div className="mb-0 px-0 flex justify-center">
-          <img src={OrcaLogo} alt="Orca Logo" className="w-17.5 h-17.5 object-contain" />
+          <img src={OrcaLogo} alt="Orca Logo" className="w-45 h-45 object-contain" />
         </div>
 
         <nav className="flex-1 space-y-1 overflow-y-auto">
