@@ -19,6 +19,7 @@ import {
 export default function App() {
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(true);
 
   // Backend Data States
   const [signals, setSignals] = useState<SignalsData | null>(null);
@@ -767,6 +768,14 @@ export default function App() {
       {/* Background Dimming Matrix */}
       <div className="fixed inset-0 pointer-events-none z-0 bg-black/45"></div>
 
+      {/* Mobile sidebar backdrop */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-30 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+        ></div>
+      )}
+
       {/* Floating Alerts Container */}
       {toastMessage && (
         <div className="fixed bottom-6 right-6 z-50 animate-bounce">
@@ -785,13 +794,21 @@ export default function App() {
         </div>
       )}
 
-      {/* LEFT SIDE NAVIGATION PANEL BAR */}
-      <aside className="hidden md:flex flex-col py-0 px-0 glass-panel glass-panel-silver-border w-72 shrink-0 z-30">
-        <div className="mb-0 px-0 flex justify-center">
-          <img src={OrcaLogo} alt="Orca Logo" className="w-20 h-20 object-contain" />
+      {/* LEFT SIDE NAVIGATION PANEL BAR - TOGGLEABLE */}
+      <aside className={`fixed md:relative flex flex-col py-0 px-0 glass-panel glass-panel-silver-border transition-all duration-300 ease-out z-40 ${
+        sidebarOpen ? "w-72 md:w-72" : "w-0 md:hidden"
+      } h-screen overflow-hidden`}>
+        <div className="flex items-center justify-between px-4 pt-4 pb-2">
+          <img src={OrcaLogo} alt="Orca Logo" className="w-12 h-12 object-contain" />
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="md:hidden text-white hover:text-cyan-400 transition-colors"
+          >
+            <span className="material-symbols-outlined text-2xl">menu_close</span>
+          </button>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto">
+        <nav className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
           <p className="font-mono text-[9px] text-on-surface-variant/40 px-4 mb-3 uppercase tracking-[0.2em]">Navigation</p>
           
           <button 
@@ -951,13 +968,19 @@ export default function App() {
         {/* TOP META BAR */}
         <div className="h-24 flex items-center justify-between px-10 border-b border-white/10 bg-black/40 backdrop-blur-md">
           <div className="flex items-center gap-6">
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="hidden md:block text-white hover:text-cyan-400 transition-colors"
+            >
+              <span className="material-symbols-outlined text-2xl">{sidebarOpen ? "menu_open" : "menu"}</span>
+            </button>
             <div className="relative group">
               <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant text-[20px] group-focus-within:text-cyan-400 transition-colors w-4 h-4" />
-              <input 
+              <input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-black/60 backdrop-blur-2xl border border-white/10 rounded-xl pl-12 pr-6 py-2.5 text-sm w-96 focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400/50 outline-none text-white transition-all font-mono placeholder:text-on-surface-variant/40" 
-                placeholder="Search Tickers (e.g. AAPL, NVDA)..." 
+                className="bg-black/60 backdrop-blur-2xl border border-white/10 rounded-xl pl-12 pr-6 py-2.5 text-sm w-96 focus:ring-2 focus:ring-cyan-500/20 focus:border-cyan-400/50 outline-none text-white transition-all font-mono placeholder:text-on-surface-variant/40"
+                placeholder="Search Tickers (e.g. AAPL, NVDA)..."
                 type="text"
               />
             </div>
