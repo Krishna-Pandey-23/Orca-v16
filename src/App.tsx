@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Activity, Newspaper, TrendingUp, TriangleAlert as AlertTriangle, ShieldAlert, Search, Bell, Zap, RotateCw, Settings, Check, Info, Sparkles, ExternalLink, Database, Globe, Clock, Compass, TrendingDown, Calendar, Layers, Tag } from "lucide-react";
+import { Activity, Newspaper, TrendingUp, TriangleAlert as AlertTriangle, ShieldAlert, Search, Bell, Zap, RotateCw, Settings, Check, Info, Sparkles, ExternalLink, Database, Globe, Clock, Compass, TrendingDown, Calendar, Layers, Tag, FileText } from "lucide-react";
 import Nse500Tracker from "./components/Nse500Tracker";
 import LiveEarningsFeed, { LiveEarningsData, LiveEarningsCall } from "./components/LiveEarningsFeed";
 import OrcaLogo from "./assets/Orca_Logo_Enhanced.png";
@@ -73,6 +73,16 @@ export default function App() {
   const [isScrapingMcWorld, setIsScrapingMcWorld] = useState<boolean>(false);
   const [mcWorldSearchQuery, setMcWorldSearchQuery] = useState<string>("");
 
+  // IndStocks Market News Feed States
+  const [indStocksFeedData, setIndStocksFeedData] = useState<any>(null);
+  const [isScrapingIndStocksFeed, setIsScrapingIndStocksFeed] = useState<boolean>(false);
+  const [indStocksFeedSearchQuery, setIndStocksFeedSearchQuery] = useState<string>("");
+
+  // Earnings Feed States
+  const [earningsFeedData, setEarningsFeedData] = useState<any>(null);
+  const [isScrapingEarningsFeed, setIsScrapingEarningsFeed] = useState<boolean>(false);
+  const [earningsFeedSearchQuery, setEarningsFeedSearchQuery] = useState<string>("");
+
   // NSE Data States
   const [nseData, setNseData] = useState<any>(null);
   const [isFetchingNSE, setIsFetchingNSE] = useState<boolean>(false);
@@ -102,6 +112,111 @@ export default function App() {
   const [conflictArticles, setConflictArticles] = useState<any[]>([]);
   const [isFetchingConflict, setIsFetchingConflict] = useState<boolean>(false);
   const [conflictError, setConflictError] = useState<string | null>(null);
+
+  // Pipeline States
+  const [pipelineStage1Result, setPipelineStage1Result] = useState<any>(null);
+  const [pipelineStage2Result, setPipelineStage2Result] = useState<any>(null);
+  const [isProcessingPipeline, setIsProcessingPipeline] = useState<boolean>(false);
+  const [pipelineError, setPipelineError] = useState<string | null>(null);
+  const [isPipelineStage1Expanded, setIsPipelineStage1Expanded] = useState<boolean>(true);
+  const [isPipelineStage2Expanded, setIsPipelineStage2Expanded] = useState<boolean>(true);
+
+  /**
+   * Parses news timestamp string to Date object (IST timezone).
+   * Supports format: "HH:MM AM/PM, DD Mon YYYY" (e.g., "03:47 PM, 02 Jun 2026")
+   * The timestamps in news data are already in IST (local time for Indian news).
+   * @param timeStr - Timestamp string from news feed
+   * @returns Date object or null if parsing fails
+   */
+  const parseNewsTimestamp = (timeStr: string): Date | null => {
+    try {
+      const match = timeStr.match(/(\d{2}):(\d{2})\s*(AM|PM),\s*(\d{2})\s*(\w{3})\s*(\d{4})/i);
+      if (!match) return null;
+
+      const [_, hours, minutes, ampm, day, month, year] = match;
+      const monthMap: Record<string, number> = {
+        Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5,
+        Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11
+      };
+
+      let hour = parseInt(hours);
+      if (ampm.toUpperCase() === 'PM' && hour !== 12) hour += 12;
+      if (ampm.toUpperCase() === 'AM' && hour === 12) hour = 0;
+
+      // Create date using local timezone (timestamps are in IST/India local time)
+      return new Date(
+        parseInt(year),
+        monthMap[month],
+        parseInt(day),
+        hour,
+        parseInt(minutes)
+      );
+    } catch (error) {
+      console.error(`[Pipeline] Error parsing timestamp: ${timeStr}`, error);
+      return null;
+    }
+  };
+
+  /**
+   * Filters news items by time window (yesterday 3:00 PM to now).
+   * Items without timestamps or unparseable timestamps are included with warning.
+   * Uses consistent timezone handling - timestamps are in IST (local time).
+   */
+  const filterHeadlinesByTimeWindow = (newsItems: any[]): any[] => {
+    const now = new Date();
+    // Get yesterday's date and set to 3:00 PM
+    const yesterday3PM = new Date();
+    yesterday3PM.setDate(yesterday3PM.getDate() - 1);
+    yesterday3PM.setHours(15, 0, 0, 0); // 3:00 PM
+    
+    console.log(`[Pipeline] Time window: ${yesterday3PM.toLocaleString('en-IN')} to ${now.toLocaleString('en-IN')}`);
+
+    const filtered = newsItems.filter(item => {
+      const timestampStr = item.time || item.published_at;
+      if (!timestampStr) {
+        console.warn(`[Pipeline] No timestamp for headline: ${item.title}`);
+        return true; // Include items without timestamps
+      }
+
+      const timestamp = parseNewsTimestamp(timestampStr);
+      if (!timestamp) {
+        console.warn(`[Pipeline] Failed to parse timestamp for: ${item.title} (value: ${timestampStr})`);
+        return true; // Include unparseable timestamps
+      }
+
+      const isInWindow = timestamp >= yesterday3PM && timestamp <= now;
+      if (!isInWindow) {
+        console.log(`[Pipeline] Excluding (outside window): ${item.title} at ${timestamp.toLocaleString('en-IN')}`);
+      }
+      return isInWindow;
+    });
+
+    console.log(`[Pipeline] Filtered ${filtered.length} of ${newsItems.length} headlines from time window`);
+    return filtered;
+  };
+
+  /**
+   * Deduplicates news items based on normalized title comparison.
+   * Keeps first occurrence of each unique title.
+   */
+  const deduplicateHeadlines = (newsItems: any[]): any[] => {
+    const seen = new Set<string>();
+    const unique: any[] = [];
+
+    for (const item of newsItems) {
+      const normalizedTitle = (item.title || "").toLowerCase().trim();
+      
+      if (!seen.has(normalizedTitle)) {
+        seen.add(normalizedTitle);
+        unique.push(item);
+      } else {
+        console.log(`[Pipeline] Duplicate headline removed: ${item.title}`);
+      }
+    }
+
+    console.log(`[Pipeline] Deduplicated: ${newsItems.length} → ${unique.length} headlines`);
+    return unique;
+  };
 
   // Interaction / Loading UX states for ETFs
   const [isRebalancingEtfs, setIsRebalancingEtfs] = useState<boolean>(false);
@@ -154,6 +269,8 @@ export default function App() {
     fetchNSEData();
     fetchBSEData();
     fetchTickertapeEvents();
+    fetchIndStocksFeed();
+    fetchEarningsFeed();
   }, []);
 
   // Timer tracking
@@ -518,6 +635,72 @@ export default function App() {
     }
   };
 
+  // IndStocks Market News Feed API Functions
+  const fetchIndStocksFeed = async () => {
+    try {
+      const res = await fetch("/api/indstocks-feed");
+      if (res.ok) {
+        const data = await res.json();
+        setIndStocksFeedData(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch IndStocks feed:", err);
+    }
+  };
+
+  const handleScrapeIndStocksFeed = async () => {
+    setIsScrapingIndStocksFeed(true);
+    showToast("Scraping IndStocks market news feed...", "info");
+    try {
+      const res = await fetch("/api/indstocks-feed/scrape", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setIndStocksFeedData(data.data);
+        showToast("IndStocks feed scraped successfully!", "success");
+      } else {
+        showToast("Failed to scrape IndStocks feed.", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Network failure during IndStocks feed scrape.", "error");
+    } finally {
+      setIsScrapingIndStocksFeed(false);
+    }
+  };
+
+  // Earnings Feed API Functions
+  const fetchEarningsFeed = async () => {
+    try {
+      const res = await fetch("/api/earnings-feed");
+      if (res.ok) {
+        const data = await res.json();
+        setEarningsFeedData(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch earnings feed:", err);
+    }
+  };
+
+  const handleScrapeEarningsFeed = async () => {
+    setIsScrapingEarningsFeed(true);
+    showToast("Fetching live earnings results with detailed article extraction...", "info");
+    try {
+      const res = await fetch("/api/earnings-feed/scrape", { method: "POST" });
+      if (res.ok) {
+        const data = await res.json();
+        setEarningsFeedData(data.data);
+        showToast("Earnings feed scraped successfully!", "success");
+      } else {
+        showToast("Failed to scrape earnings feed.", "error");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Network failure during earnings feed scrape.", "error");
+    } finally {
+      setIsScrapingEarningsFeed(false);
+    }
+  };
+
   // NSE Data API Functions
   const fetchNSEData = async () => {
     try {
@@ -652,6 +835,465 @@ export default function App() {
     }
   };
 
+  // Pipeline Stage 1: Process News Feed through Groq API
+  // Pipeline Stage 1: Fetch News and Process through Groq API
+  const handlePipelineStage1 = async () => {
+    if (!groqApiKey) {
+      showToast("Groq API key not configured. Please set it in Settings.", "error");
+      return;
+    }
+
+    setIsProcessingPipeline(true);
+    setPipelineError(null);
+    showToast("Fetching latest news data...", "info");
+
+    try {
+      // Step 1: Fetch news data using the same method as News Feed tab
+      const newsRes = await fetch("/api/news");
+      if (!newsRes.ok) {
+        throw new Error("Failed to fetch news data");
+      }
+      const newsData = await newsRes.json();
+      
+      // Update news state with fetched data
+      setNews(newsData);
+
+      if (!newsData || !newsData.feed || newsData.feed.length === 0) {
+        showToast("No news data available from API.", "error");
+        setIsProcessingPipeline(false);
+        return;
+      }
+
+      // Step 2: Apply time filtering and deduplication
+      const now = new Date();
+      const yesterday3PM = new Date(now);
+      yesterday3PM.setDate(yesterday3PM.getDate() - 1);
+      yesterday3PM.setHours(15, 0, 0, 0);
+      
+      console.log(`[Pipeline] Total news items: ${newsData.feed.length}`);
+      console.log(`[Pipeline] Current time: ${now.toLocaleString('en-IN')}`);
+      console.log(`[Pipeline] Time window start (yesterday 3PM): ${yesterday3PM.toLocaleString('en-IN')}`);
+      
+      const filteredNews = filterHeadlinesByTimeWindow(newsData.feed);
+      console.log(`[Pipeline] After time filtering: ${filteredNews.length} items`);
+      
+      const uniqueNews = deduplicateHeadlines(filteredNews);
+      console.log(`[Pipeline] After deduplication: ${uniqueNews.length} items`);
+
+      if (uniqueNews.length === 0) {
+        // Show all timestamps for debugging
+        console.log(`[Pipeline] DEBUG: Sample timestamps from feed:`);
+        newsData.feed.slice(0, 5).forEach(item => {
+          console.log(`  - "${item.title.substring(0, 50)}...": ${item.time}`);
+        });
+        
+        showToast("No headlines found in time window (yesterday 3PM to now). Check news data source.", "error");
+        setIsProcessingPipeline(false);
+        return;
+      }
+
+      // Use the already calculated now and yesterday3PM for feedback messages
+
+      // Step 3: Format with complete data (no truncation)
+      const headlinesText = uniqueNews
+        .filter(item => item.title && item.title.trim().length > 0)
+        .map(item => {
+          const title = item.title.trim();
+          const summary = item.summary ? ` | ${item.summary.trim()}` : '';
+          const source = item.source ? ` [${item.source}]` : '';
+          const topic = item.topic ? ` (${item.topic})` : '';
+          
+          return `- ${title}${summary}${source}${topic}`;
+        })
+        .join("\n");
+
+      // Step 4: Estimate tokens and warn if large payload
+      const estimatedTokens = headlinesText.length / 4;
+      if (estimatedTokens > 96000) {
+        showToast(`Large dataset (${uniqueNews.length} headlines, ~${Math.round(estimatedTokens)} tokens). Processing may take longer...`, "info");
+      }
+
+      showToast(`Analyzing ${uniqueNews.length} headlines from ${yesterday3PM.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })} to now...`, "info");
+
+      // Step 5: Build the prompt with headlines
+      const systemPrompt = `SYSTEM:You are a Senior Quantitative Equity Research Analyst at a premier Indian institutional fund with 20+ years of BSE/NSE experience. Your core objective: distill market noise into high-conviction, actionable investment signals.HARD RULES:1. STRICT GROUNDING: Never hallucinate or infer a stock ticker. The company name or ticker MUST explicitly appear in the provided headline text.2. DEDUPLICATION: Multiple headlines covering the exact same corporate event or macro data point must be consolidated into ONE single signal.3. ISOLATED SENTIMENT: Derive sentiment strictly from the provided text. Do not project external context, historical performance, or future expectations outside the text.4. CONFIDENCE SCORING: - 1 headline = Maximum confidence of 50.- 2 headlines = Maximum confidence of 70.- 3+ headlines = Maximum confidence of 90.5. BLANK FALLBACK: If no clear signal exists for a category, return an empty array or null. Do not force a fit.6. OUTPUT FORMAT: Return strictly valid JSON. RECOMMENT ATLEAST 10 STOCKS .Do not use markdown wrappers, formatting, or introductory/concluding text.OUTPUT SCHEMA:{"_analysis_scratchpad": "Briefly map headlines to sectors/stocks and note overlapping events before generating signals. Keep it under 50 words.","analysis_timestamp": "ISO8601","headline_count": 0,"dominant_sentiment": "BULLISH|BEARISH|MIXED|NEUTRAL","market_mood_score": "Integer from -100 to 100","themes": {"bullish": [{"theme":"string","supporting_headlines":0,"confidence":0,"key_stocks_mentioned":["NSE_SYMBOL"]}],"bearish": [{"theme":"string","supporting_headlines":0,"confidence":0,"key_stocks_mentioned":["NSE_SYMBOL"]}]},"stock_signals": [{"symbol": "NSE_SYMBOL or null","company": "string","direction": "POSITIVE|NEGATIVE|NEUTRAL","confidence": 0,"catalyst": "EARNINGS|FII_DII|SECTOR_TREND|POLICY|MACRO|CORPORATE_ACTION|MANAGEMENT_COMMENTARY|OTHER","signal_rationale": "One concise sentence. State the event and its immediate trading implication.","headline_count": 0}],"sector_signals": {"BANKING": "BULLISH|BEARISH|NEUTRAL","IT": "BULLISH|BEARISH|NEUTRAL","DEFENSE": "BULLISH|BEARISH|NEUTRAL","RENEWABLES": "BULLISH|BEARISH|NEUTRAL","AUTO": "BULLISH|BEARISH|NEUTRAL","ENERGY": "BULLISH|BEARISH|NEUTRAL","PHARMA": "BULLISH|BEARISH|NEUTRAL","FMCG": "BULLISH|BEARISH|NEUTRAL","INFRA": "BULLISH|BEARISH|NEUTRAL"},"policy_signals": ["string"],"data_quality": "HIGH|MEDIUM|LOW","data_quality_reason": "string"}USER:TASK: Extract investment signals from Indian market headlines published between ${yesterday3PM.toLocaleString('en-IN')} and ${now.toLocaleString('en-IN')} (IST).
+
+TOTAL HEADLINES: ${uniqueNews.length}
+ANALYSIS WINDOW: ${yesterday3PM.toLocaleString('en-IN')} to ${now.toLocaleString('en-IN')} (IST)
+HEADLINES (Format: Title | Summary [Source] (Topic)):
+${headlinesText}`;
+
+      // Step 6: Make 2 API calls sequentially with delays to avoid rate limits
+      showToast(`Making 2 API calls for robust analysis (sequential)...`, "info");
+      
+      const allAnalysisResults = [];
+      
+      for (let i = 0; i < 2; i++) {
+        try {
+          // Add delay before each call (except the first one)
+          if (i > 0) {
+            console.log(`[Pipeline] Waiting 2 seconds before API call ${i + 1}/2...`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+          
+          console.log(`[Pipeline] API call ${i + 1}/2 started`);
+          
+          const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${groqApiKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: "llama-3.1-8b-instant",
+              messages: [
+                {
+                  role: "user",
+                  content: systemPrompt,
+                },
+              ],
+            }),
+          });
+
+          if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.error?.message || `API error: ${response.status}`);
+          }
+
+          const data = await response.json();
+          const analysisText = data.choices?.[0]?.message?.content || "";
+          console.log(`[Pipeline] API call ${i + 1}/2 completed, response length: ${analysisText.length} chars`);
+
+          // Parse JSON from response
+          try {
+            const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              allAnalysisResults.push(JSON.parse(jsonMatch[0]));
+            } else {
+              allAnalysisResults.push(JSON.parse(analysisText));
+            }
+            console.log(`[Pipeline] API call ${i + 1}/2 JSON parsed successfully`);
+          } catch (parseErr) {
+            console.error(`[Pipeline] API call ${i + 1}/2 Failed to parse JSON:`, analysisText);
+            allAnalysisResults.push({
+              raw_response: analysisText,
+              parse_error: "Could not parse JSON from response",
+            });
+          }
+        } catch (err: any) {
+          console.error(`[Pipeline] API call ${i + 1}/2 failed:`, err.message);
+          throw err;
+        }
+      }
+
+      console.log(`[Pipeline] All 2 API calls completed successfully`);
+      
+      // Combine results from all API calls
+      const combinedResult = combinePipelineResults(allAnalysisResults);
+      console.log(`[Pipeline] Combined results from ${allAnalysisResults.length} API calls`);
+
+      setPipelineStage1Result(combinedResult);
+      showToast(`Pipeline Stage 1 analysis completed successfully (${allAnalysisResults.length} API calls)!`, "success");
+    } catch (err: any) {
+      console.error("Pipeline Stage 1 error:", err);
+      const errorMessage = err.message || "Failed to process pipeline stage 1";
+      setPipelineError(errorMessage);
+      showToast(errorMessage, "error");
+    } finally {
+      setIsProcessingPipeline(false);
+    }
+  };
+
+  // Pipeline Stage 2: Process Global Monitor Data through Groq API
+  const handlePipelineStage2 = async () => {
+    if (!groqApiKey) {
+      showToast("Groq API key not configured. Please set it in Settings.", "error");
+      return;
+    }
+
+    setIsProcessingPipeline(true);
+    setPipelineError(null);
+    showToast("Fetching latest global monitor data from backend...", "info");
+
+    try {
+      // Fetch global monitor data from backend using the same scrape endpoint as Global Monitor tab
+      const res = await fetch(`/api/global-monitor/scrape?alpha_key=${encodeURIComponent(alphaVantageApiKey)}`, { method: "POST" });
+      
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to fetch global monitor data");
+      }
+
+      const data = await res.json();
+      console.log("[Pipeline Stage 2] Backend response structure:", Object.keys(data));
+      
+      const globalData = data.db; // Extract data.db as done in handleScrapeGlobalMonitor
+      console.log("[Pipeline Stage 2] globalData structure:", globalData ? Object.keys(globalData) : "null");
+      
+      setGlobalMonitorData(globalData);
+
+      // Check if indices exist in the data
+      if (!globalData) {
+        console.error("[Pipeline Stage 2] globalData is null or undefined");
+        showToast("Backend returned no data. Please check backend logs.", "error");
+        setIsProcessingPipeline(false);
+        return;
+      }
+
+      // The backend returns global_indices, not indices
+      if (!globalData.global_indices) {
+        console.error("[Pipeline Stage 2] globalData.global_indices is missing. Available fields:", Object.keys(globalData));
+        showToast("Backend data missing 'global_indices' field. Available fields: " + Object.keys(globalData).join(", "), "error");
+        setIsProcessingPipeline(false);
+        return;
+      }
+
+      if (globalData.global_indices.length === 0) {
+        console.error("[Pipeline Stage 2] globalData.global_indices is empty array");
+        showToast("No global indices data available from backend. Please try again.", "error");
+        setIsProcessingPipeline(false);
+        return;
+      }
+
+      console.log(`[Pipeline Stage 2] Fetched ${globalData.global_indices.length} indices from backend`);
+
+      // Format indices data as "index_name: value (change_pct%)"
+      const indicesText = globalData.global_indices
+        .map((index: any) => {
+          const name = index.name || "Unknown Index";
+          const value = index.value || "N/A";
+          const change = index.change_pct || "0.00";
+          return `${name}: ${value} (${change}%)`;
+        })
+        .join("\n");
+
+      console.log(`[Pipeline Stage 2] Formatted indices count: ${globalData.global_indices.length}`);
+      console.log(`[Pipeline Stage 2] First 3 indices:\n${indicesText.split('\n').slice(0, 3).join('\n')}`);
+
+      const systemPrompt = `SYSTEM:You are a global macro strategist specializing in Emerging Market capital flows, particularly India.  Your job: Translate global index movements into actionable signals for Indian intraday trading.  HARD RULES: - VIX > 20 = elevated fear. VIX > 30 = panic. Always call this out. - DXY direction is the most important single signal for FII India flows. Treat it as primary. - Weak DXY = FII flows INTO India. Strong DXY = FII pulls FROM India. - Do not report what happened. Report what it MEANS for the Indian market today. - Return ONLY minified JSON. No text outside JSON.USER:TASK: Analyze global indices to determine risk appetite and India implication.  GLOBAL INDICES DATA: {index_name}: {value} ({change_pct}%) [all 40 indices listed]  OUTPUT must follow this exact schema.OUTPUT SCHEMA:json{   "risk_appetite": "STRONG_RISK_ON|RISK_ON|NEUTRAL|RISK_OFF|STRONG_RISK_OFF",   "risk_score": 0,   "vix": {     "value": 0.0,     "signal": "CALM|ELEVATED|FEAR|PANIC",     "india_implication": "string"   },   "dxy": {     "value": 0.0,     "direction": "STRENGTHENING|WEAKENING|FLAT",     "fii_implication": "string",     "inr_pressure": "POSITIVE|NEGATIVE|NEUTRAL"   },   "regional_signals": {     "us": {"direction":"UP|DOWN|FLAT","strength":"STRONG|MODERATE|WEAK","breadth":"BROAD|NARROW","signal":"string"},     "europe": {"direction":"UP|DOWN|FLAT","strength":"STRONG|MODERATE|WEAK","signal":"string"},     "asia": {"direction":"UP|DOWN|FLAT","strength":"STRONG|MODERATE|WEAK","nikkei_signal":"string","hangseng_signal":"string"}   },   "key_divergences": ["US up but Asia down = rotation signal"],   "india_opening_bias": "GAP_UP_STRONG|GAP_UP_MILD|FLAT|GAP_DOWN_MILD|GAP_DOWN_STRONG",   "india_opening_rationale": "string",   "fii_flow_expectation": "HEAVY_INFLOW|INFLOW|NEUTRAL|OUTFLOW|HEAVY_OUTFLOW",   "sector_benefit_order": ["BANKING","IT","ENERGY"],   "primary_risk": "string"}`;
+
+      const userMessage = `GLOBAL INDICES DATA:\n${indicesText}`;
+
+      console.log("[Pipeline Stage 2] Calling Groq API...");
+      showToast("Sending data to Groq API for analysis...", "info");
+
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${groqApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "llama-3.1-8b-instant",
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt,
+            },
+            {
+              role: "user",
+              content: userMessage,
+            },
+          ],
+        }),
+      });
+
+      console.log("[Pipeline Stage 2] Groq API response status:", response.status);
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("[Pipeline Stage 2] Groq API error:", errorData);
+        throw new Error(errorData.error?.message || `Groq API error: ${response.status}`);
+      }
+
+      const apiData = await response.json();
+      const analysisText = apiData.choices?.[0]?.message?.content || "";
+      console.log(`[Pipeline Stage 2] Groq API call completed, response length: ${analysisText.length} chars`);
+
+      // Parse JSON from response
+      let analysisResult: any;
+      try {
+        const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          analysisResult = JSON.parse(jsonMatch[0]);
+        } else {
+          analysisResult = JSON.parse(analysisText);
+        }
+        console.log(`[Pipeline Stage 2] JSON parsed successfully:`, Object.keys(analysisResult));
+      } catch (parseErr) {
+        console.error(`[Pipeline Stage 2] Failed to parse JSON:`, analysisText);
+        analysisResult = {
+          raw_response: analysisText,
+          parse_error: "Could not parse JSON from response",
+        };
+      }
+
+      setPipelineStage2Result(analysisResult);
+      showToast("Pipeline Stage 2 analysis completed successfully!", "success");
+    } catch (err: any) {
+      console.error("Pipeline Stage 2 error:", err);
+      const errorMessage = err.message || "Failed to process pipeline stage 2";
+      setPipelineError(errorMessage);
+      showToast(errorMessage, "error");
+    } finally {
+      setIsProcessingPipeline(false);
+    }
+  };
+
+  /**
+   * Combines results from 5 API calls into a single consolidated result.
+   * Aggregates stock signals, sector signals, and calculates consensus sentiment.
+   */
+  const combinePipelineResults = (results: any[]): any => {
+    if (results.length === 0) {
+      return { error: "No results to combine" };
+    }
+
+    // Count occurrences of each element across all results
+    const stockSignalCounts = new Map<string, { count: number; signals: any[] }>();
+    const sectorSignals = new Map<string, Map<string, number>>();
+    const themes = new Map<string, { count: number; themes: any[] }>();
+    let bullishCount = 0;
+    let bearishCount = 0;
+    let mixedCount = 0;
+    let neutralCount = 0;
+
+    results.forEach((result, index) => {
+      // Count stock signals
+      if (result.stock_signals && Array.isArray(result.stock_signals)) {
+        result.stock_signals.forEach((signal: any) => {
+          const key = `${signal.company || signal.symbol || 'unknown'}`;
+          if (!stockSignalCounts.has(key)) {
+            stockSignalCounts.set(key, { count: 0, signals: [] });
+          }
+          const entry = stockSignalCounts.get(key)!;
+          entry.count += 1;
+          entry.signals.push(signal);
+        });
+      }
+
+      // Count sector signals
+      if (result.sector_signals && typeof result.sector_signals === 'object') {
+        Object.entries(result.sector_signals).forEach(([sector, sentiment]: [string, string]) => {
+          if (!sectorSignals.has(sector)) {
+            sectorSignals.set(sector, new Map());
+          }
+          const sentimentCounts = sectorSignals.get(sector)!;
+          sentimentCounts.set(sentiment, (sentimentCounts.get(sentiment) || 0) + 1);
+        });
+      }
+
+      // Count themes
+      if (result.themes && typeof result.themes === 'object') {
+        Object.entries(result.themes).forEach(([type, typeThemes]: [string, any]) => {
+          if (Array.isArray(typeThemes)) {
+            typeThemes.forEach((theme: any) => {
+              const key = theme.theme || 'unknown';
+              if (!themes.has(key)) {
+                themes.set(key, { count: 0, themes: [] });
+              }
+              const entry = themes.get(key)!;
+              entry.count += 1;
+              entry.themes.push(theme);
+            });
+          }
+        });
+      }
+
+      // Count sentiments
+      if (result.dominant_sentiment) {
+        switch (result.dominant_sentiment.toUpperCase()) {
+          case 'BULLISH': bullishCount++; break;
+          case 'BEARISH': bearishCount++; break;
+          case 'MIXED': mixedCount++; break;
+          case 'NEUTRAL': neutralCount++; break;
+        }
+      }
+    });
+
+    // Get consensus sentiment
+    const total = bullishCount + bearishCount + mixedCount + neutralCount;
+    let dominantSentiment = 'NEUTRAL';
+    if (bullishCount > total * 0.5) dominantSentiment = 'BULLISH';
+    else if (bearishCount > total * 0.5) dominantSentiment = 'BEARISH';
+    else if (bullishCount > bearishCount) dominantSentiment = 'BULLISH';
+    else if (bearishCount > bullishCount) dominantSentiment = 'BEARISH';
+    else if (mixedCount > total * 0.3) dominantSentiment = 'MIXED';
+
+    // Aggregate stock signals (include if appears in at least 2 calls)
+    const aggregatedStockSignals = Array.from(stockSignalCounts.entries())
+      .filter(([_, entry]) => entry.count >= 2)
+      .map(([key, entry]) => {
+        // Get the most common direction across calls
+        const directionCounts = new Map<string, number>();
+        entry.signals.forEach((s: any) => {
+          directionCounts.set(s.direction, (directionCounts.get(s.direction) || 0) + 1);
+        });
+        const maxDirection = Array.from(directionCounts.entries()).sort((a, b) => b[1] - a[1])[0];
+        
+        return {
+          company: entry.signals[0].company || key,
+          symbol: entry.signals[0].symbol || null,
+          direction: maxDirection ? maxDirection[0] : 'NEUTRAL',
+          confidence: Math.round((entry.count / results.length) * 100), // Dynamic based on actual API calls
+          catalyst: entry.signals[0].catalyst || 'OTHER',
+          signal_rationale: entry.signals[0].signal_rationale || 'Consensus signal across multiple analyses',
+          headline_count: entry.signals.length,
+        };
+      })
+      .sort((a, b) => b.confidence - a.confidence);
+
+    // Aggregate sector signals (include if appears in at least 2 calls)
+    const aggregatedSectorSignals: Record<string, string> = {};
+    sectorSignals.forEach((sentimentCounts, sector) => {
+      const totalSectorCalls = Array.from(sentimentCounts.values()).reduce((a, b) => a + b, 0);
+      if (totalSectorCalls >= 2) {
+        const maxSentiment = Array.from(sentimentCounts.entries()).sort((a, b) => b[1] - a[1])[0];
+        aggregatedSectorSignals[sector] = maxSentiment ? maxSentiment[0] : 'NEUTRAL';
+      }
+    });
+
+    // Aggregate themes (include if appears in at least 2 calls)
+    const aggregatedThemes = {
+      bullish: [],
+      bearish: [],
+    };
+    themes.forEach((entry, themeName) => {
+      if (entry.count >= 2) {
+        const mostCommonType = entry.themes[0] ? (entry.themes[0].type === 'bullish' ? 'bullish' : 'bearish') : 'bullish';
+        aggregatedThemes[mostCommonType === 'bullish' ? 'bullish' : 'bearish'].push({
+          theme: themeName,
+          supporting_headlines: entry.themes.reduce((sum: number, t: any) => sum + (t.supporting_headlines || 0), 0),
+          confidence: Math.round((entry.count / results.length) * 100),
+          key_stocks_mentioned: Array.from(new Set(entry.themes.flatMap((t: any) => t.key_stocks_mentioned || []))).slice(0, 3),
+        });
+      }
+    });
+
+    // Calculate average market mood score
+    const validScores = results
+      .map((r) => r.market_mood_score)
+      .filter((s: any) => typeof s === 'number');
+    const avgMarketMood = validScores.length > 0
+      ? Math.round(validScores.reduce((a: number, b: number) => a + b, 0) / validScores.length)
+      : 0;
+
+    return {
+      analysis_timestamp: new Date().toISOString(),
+      headline_count: results[0]?.headline_count || 0,
+      dominant_sentiment: dominantSentiment,
+      market_mood_score: avgMarketMood,
+      themes: aggregatedThemes,
+      stock_signals: aggregatedStockSignals.slice(0, 15), // Top 15 signals
+      sector_signals: aggregatedSectorSignals,
+      policy_signals: [],
+      data_quality: results[0]?.data_quality || 'HIGH',
+      data_quality_reason: `Consensus analysis from ${results.length} API calls`,
+      confidence_score: Math.round((aggregatedStockSignals.length + Object.keys(aggregatedSectorSignals).length) / 20 * 100),
+      api_calls_count: results.length,
+    };
+  };
+
   const handleScrapeEtfs = async () => {
     setIsScrapingEtfs(true);
     showToast("Executing live active web crawlers over 14 Global ETF categories...", "info");
@@ -775,7 +1417,7 @@ export default function App() {
   ) || [];
 
   return (
-    <div className="flex h-screen overflow-hidden text-on-surface select-none relative font-sans scanline-effect" data-theme={isDarkMode ? "dark" : "light"}>
+    <div className="flex h-screen overflow-hidden text-on-surface select-none relative font-sans scanline-effect z-10" data-theme={isDarkMode ? "dark" : "light"}>
       {/* Background Dimming Matrix */}
       <div className="fixed inset-0 pointer-events-none z-0 bg-black/45"></div>
 
@@ -935,6 +1577,32 @@ export default function App() {
           </button>
 
           <button 
+            id="nav-pipeline"
+            onClick={() => setActiveTab("pipeline")}
+            className={`w-full flex items-center gap-4 px-4 py-3 font-mono text-xs rounded-xl transition-all duration-200 text-left ${
+              activeTab === "pipeline" 
+                ? "bg-white/10 text-white border border-white/20 shadow-md" 
+                : "text-on-surface-variant hover:text-white hover:bg-white/5"
+            }`}
+          >
+            <span className="material-symbols-outlined text-xl">account_tree</span>
+            Pipeline
+          </button>
+
+          <button 
+            id="nav-earnings-feed"
+            onClick={() => setActiveTab("earnings-feed")}
+            className={`w-full min-w-0 flex items-center gap-4 px-4 py-3 font-mono text-xs rounded-xl transition-all duration-200 text-left ${
+              activeTab === "earnings-feed" 
+                ? "bg-white/10 text-white border border-white/20 shadow-md" 
+                : "text-on-surface-variant hover:text-white hover:bg-white/5"
+            }`}
+          >
+            <FileText className="w-5 h-5 shrink-0" />
+            <span className="min-w-0 truncate">Earnings Feed</span>
+          </button>
+
+          <button 
             id="nav-settings"
             onClick={() => setActiveTab("settings")}
             className={`w-full flex items-center gap-4 px-4 py-3 font-mono text-xs rounded-xl transition-all duration-200 text-left ${
@@ -992,7 +1660,7 @@ export default function App() {
           <div className="max-w-[1600px] mx-auto">
             
             {/* TAB ONE: DASHBOARD / SIGNALS SCREEN */}
-            {activeTab === "dashboard" && (
+            {activeTab === "dashboard" && signals && (
               <div className="flex flex-col lg:flex-row gap-8">
                 
                 {/* Left Active Alpha Signals column */}
@@ -1044,10 +1712,10 @@ export default function App() {
                           </div>
                           
                           <div className="text-right">
-                            <div className="font-mono text-3xl text-cyan-400 font-bold">${aapl.price.toFixed(2)}</div>
+                            <div className="font-mono text-3xl text-cyan-400 font-bold">${(aapl.price || 0).toFixed(2)}</div>
                             <div className="font-mono text-cyan-500/90 text-sm flex items-center justify-end gap-1 font-semibold">
                               <span className="material-symbols-outlined text-[18px]">trending_up</span> 
-                              +{aapl.changeToday.toFixed(2)}% Today
+                              +{(aapl.changeToday || 0).toFixed(2)}% Today
                             </div>
                           </div>
                         </div>
@@ -1056,9 +1724,9 @@ export default function App() {
                         <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-10 relative z-10">
                           <div className="p-4 bg-black/40 backdrop-blur-3xl rounded-2xl border border-white/5 hover:border-white/10 transition-all shadow-[0_4px_30px_rgba(0,0,0,0.4)]">
                             <p className="font-mono text-[9px] text-on-surface-variant/80 mb-2 uppercase tracking-wider font-bold">RSI (14-Day)</p>
-                            <p className="font-mono text-xl text-white font-bold">{aapl.rsi}</p>
+                            <p className="font-mono text-xl text-white font-bold">{aapl.rsi || 0}</p>
                             <div className="w-full h-1 bg-white/10 mt-3 rounded-full overflow-hidden">
-                              <div className="h-full bg-white transition-all duration-500" style={{ width: `${aapl.rsi}%` }}></div>
+                              <div className="h-full bg-white transition-all duration-500" style={{ width: `${aapl.rsi || 0}%` }}></div>
                             </div>
                           </div>
 
@@ -1076,7 +1744,7 @@ export default function App() {
 
                           <div className="p-4 bg-black/40 backdrop-blur-3xl rounded-2xl border border-white/5 hover:border-white/10 transition-all shadow-[0_4px_30px_rgba(0,0,0,0.4)]">
                             <p className="font-mono text-[9px] text-on-surface-variant/80 mb-2 uppercase tracking-wider font-bold">Alpha Score</p>
-                            <p className="font-mono text-xl text-white font-bold">{aapl.alphaScore}/100</p>
+                            <p className="font-mono text-xl text-white font-bold">{aapl.alphaScore || 0}/100</p>
                             <p className="text-[10px] text-on-surface-variant/80 mt-2 font-semibold font-mono">Institutional Grade</p>
                           </div>
                         </div>
@@ -1127,13 +1795,13 @@ export default function App() {
                           <div className={`font-mono text-2xl font-bold relative z-10 mb-1 ${
                             t.rating === "REDUCE" ? "text-rose-400" : "text-cyan-400"
                           }`}>
-                            ${t.price.toFixed(2)}
+                            ${(t.price || 0).toFixed(2)}
                           </div>
                           
                           <div className={`font-mono text-xs font-bold mb-6 tracking-wider relative z-10 uppercase ${
                             t.rating === "REDUCE" ? "text-rose-300" : "text-cyan-300"
                           }`}>
-                            {t.changeToday > 0 ? `+${t.changeToday.toFixed(2)}%` : `${t.changeToday.toFixed(2)}%`}{" "}
+                            {(t.changeToday || 0) > 0 ? `+${(t.changeToday || 0).toFixed(2)}%` : `${(t.changeToday || 0).toFixed(2)}%`}{" "}
                             {t.symbol === "NVDA" ? "MOMENTUM" : t.symbol === "TSLA" ? "CRITICAL" : "STABLE"}
                           </div>
 
@@ -1268,13 +1936,13 @@ export default function App() {
                                   <div className="flex justify-between items-center">
                                     <span className="font-mono text-xs font-black text-white">{idxItem.symbol}</span>
                                     <span className={`font-mono text-[10px] font-bold ${isUp ? "text-cyan-400" : "text-rose-400"}`}>
-                                      {isUp ? "▲" : "▼"} {idxItem.percent_change.toFixed(2)}%
+                                      {isUp ? "▲" : "▼"} {(idxItem.percent_change || idxItem.change || 0).toFixed(2)}%
                                     </span>
                                   </div>
                                   <div className="flex justify-between items-baseline">
                                     <span className="text-[9px] font-mono text-neutral-500 font-semibold truncate max-w-[130px]">{idxItem.name}</span>
                                     <span className="font-mono text-xs font-bold text-neutral-300">
-                                      {idxItem.last_price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      {(idxItem.last_price || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                     </span>
                                   </div>
                                 </div>
@@ -1451,14 +2119,14 @@ export default function App() {
                                       ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
                                       : "bg-rose-500/10 text-rose-400 border border-rose-500/20"
                                   }`}>
-                                    {isUp ? "▲" : "▼"} {idxItem.percent_change.toFixed(2)}%
+                                    {isUp ? "▲" : "▼"} {(idxItem.percent_change || idxItem.change || 0).toFixed(2)}%
                                   </span>
                                 </div>
 
                                 <div className="flex items-baseline justify-between mt-4">
                                   <span className="font-mono text-neutral-400 text-[10px] font-bold">LAST PRICING</span>
                                   <span className="font-mono text-lg font-bold text-white tracking-tight">
-                                    ₹ {idxItem.last_price.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    ₹ {(idxItem.last_price || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </span>
                                 </div>
 
@@ -2799,6 +3467,696 @@ export default function App() {
               );
             })()}
 
+            {/* TAB: PIPELINE - STAGE 1 */}
+            {activeTab === "pipeline" && (() => {
+              return (
+                <div className="space-y-8">
+                  <header className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-6 relative z-10">
+                    <div className="max-w-4xl">
+                      <div className="flex items-center gap-3 mb-4">
+                        <span className="w-3 h-3 rounded-full bg-purple-400 animate-pulse shadow-[0_0_15px_rgba(168,85,247,1)]"></span>
+                        <h1 className="text-3xl font-extrabold text-white tracking-tight uppercase italic drop-shadow-lg">
+                          Quantitative Research Pipeline
+                        </h1>
+                      </div>
+                      <p className="font-medium text-xs text-on-surface border-l-2 border-purple-400/50 pl-6 leading-relaxed max-w-2xl bg-black/40 backdrop-blur-sm rounded-r-lg py-2 font-mono">
+                        AI-powered investment signal extraction from market headlines using Groq LLM
+                      </p>
+                    </div>
+                  </header>
+
+                  {/* Stage 1 Card */}
+                  <div className="orca-card p-8 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center">
+                          <span className="material-symbols-outlined text-purple-400 text-2xl">analytics</span>
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-bold text-white">Stage 1: News Analysis</h2>
+                          <p className="text-xs text-neutral-400 font-mono">Extract investment signals from news feed</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="px-3 py-1 bg-purple-500/20 border border-purple-500/30 rounded-lg">
+                          <span className="text-xs font-mono font-bold text-purple-300">ACTIVE</span>
+                        </div>
+                        <button
+                          onClick={() => setIsPipelineStage1Expanded(!isPipelineStage1Expanded)}
+                          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          title={isPipelineStage1Expanded ? "Collapse" : "Expand"}
+                        >
+                          <span className="material-symbols-outlined text-white text-xl">
+                            {isPipelineStage1Expanded ? "expand_less" : "expand_more"}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {isPipelineStage1Expanded && (
+                      <>
+                        <div className="border-t border-white/10 pt-6 space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                              <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-2">Auto-Fetch News</p>
+                              <p className="text-sm font-mono text-purple-400">ENABLED</p>
+                            </div>
+                            <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                              <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-2">Processing Status</p>
+                              <p className="text-sm font-mono text-purple-400">{isProcessingPipeline ? "PROCESSING..." : "READY"}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-3">
+                            <button
+                              onClick={handlePipelineStage1}
+                              disabled={isProcessingPipeline}
+                              className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-mono text-xs font-bold uppercase transition-all duration-300 outline-none cursor-pointer ${
+                                isProcessingPipeline
+                                  ? "bg-purple-500/20 text-purple-400 border border-purple-500/30 cursor-not-allowed"
+                                  : "bg-purple-500 text-white hover:bg-purple-400 border border-purple-500/50 hover:shadow-[0_0_20px_rgba(168,85,247,0.4)] active:scale-95"
+                              }`}
+                            >
+                              <span className="material-symbols-outlined text-lg">
+                                {isProcessingPipeline ? "hourglass_empty" : "play_arrow"}
+                              </span>
+                              {isProcessingPipeline ? "PROCESSING..." : "RUN STAGE 1"}
+                            </button>
+                          </div>
+
+                          {pipelineError && (
+                            <div className="bg-rose-950/20 border border-rose-500/20 rounded-lg p-4 flex gap-3">
+                              <span className="material-symbols-outlined text-rose-400 shrink-0">error</span>
+                              <div>
+                                <p className="text-xs font-mono text-rose-300 font-bold mb-1">Error</p>
+                                <p className="text-xs text-rose-200">{pipelineError}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
+                  {/* Results Section */}
+                  {pipelineStage1Result && (
+                    <div className="space-y-6">
+                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                        <span className="material-symbols-outlined text-purple-400">check_circle</span>
+                        Analysis Results
+                      </h3>
+
+                      {/* Analysis Metadata */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="orca-card p-4 space-y-2">
+                          <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Dominant Sentiment</p>
+                          <p className={`text-lg font-bold ${
+                            pipelineStage1Result.dominant_sentiment === "BULLISH" ? "text-green-400" :
+                            pipelineStage1Result.dominant_sentiment === "BEARISH" ? "text-rose-400" :
+                            "text-yellow-400"
+                          }`}>
+                            {pipelineStage1Result.dominant_sentiment || "N/A"}
+                          </p>
+                        </div>
+                        <div className="orca-card p-4 space-y-2">
+                          <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Market Mood Score</p>
+                          <p className="text-lg font-bold text-white">{pipelineStage1Result.market_mood_score || 0}</p>
+                        </div>
+                        <div className="orca-card p-4 space-y-2">
+                          <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Headlines Analyzed</p>
+                          <p className="text-lg font-bold text-white">{pipelineStage1Result.headline_count || 0}</p>
+                        </div>
+                      </div>
+
+                      {/* Stock Signals */}
+                      {pipelineStage1Result.stock_signals && pipelineStage1Result.stock_signals.length > 0 && (
+                        <div className="orca-card p-6 space-y-4">
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                            <span className="material-symbols-outlined text-cyan-400">trending_up</span>
+                            Stock Signals
+                          </h4>
+                          <div className="space-y-3 max-h-96 overflow-y-auto">
+                            {pipelineStage1Result.stock_signals.map((signal: any, idx: number) => (
+                              <div key={idx} className="bg-black/40 rounded-lg p-3 border border-white/5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="font-mono font-bold text-white">{signal.symbol || signal.company}</p>
+                                    <p className="text-xs text-neutral-400">{signal.company}</p>
+                                  </div>
+                                  <span className={`px-2 py-1 rounded text-xs font-bold font-mono ${
+                                    signal.direction === "POSITIVE" ? "bg-green-500/20 text-green-400" :
+                                    signal.direction === "NEGATIVE" ? "bg-rose-500/20 text-rose-400" :
+                                    "bg-yellow-500/20 text-yellow-400"
+                                  }`}>
+                                    {signal.direction}
+                                  </span>
+                                </div>
+                                <p className="text-xs text-neutral-300">{signal.signal_rationale}</p>
+                                <div className="flex gap-2 text-[10px] text-neutral-500">
+                                  <span>Confidence: {signal.confidence}%</span>
+                                  <span>•</span>
+                                  <span>{signal.catalyst}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Sector Signals */}
+                      {pipelineStage1Result.sector_signals && (
+                        <div className="orca-card p-6 space-y-4">
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                            <span className="material-symbols-outlined text-cyan-400">domain</span>
+                            Sector Signals
+                          </h4>
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                            {Object.entries(pipelineStage1Result.sector_signals).map(([sector, signal]: [string, any]) => (
+                              <div key={sector} className="bg-black/40 rounded-lg p-3 border border-white/5 text-center">
+                                <p className="text-xs font-mono text-neutral-400 mb-1">{sector}</p>
+                                <p className={`font-bold text-sm ${
+                                  signal === "BULLISH" ? "text-green-400" :
+                                  signal === "BEARISH" ? "text-rose-400" :
+                                  "text-yellow-400"
+                                }`}>
+                                  {signal}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Raw JSON Response */}
+                      <div className="orca-card p-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                            <span className="material-symbols-outlined text-cyan-400">code</span>
+                            Raw Analysis JSON
+                          </h4>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(JSON.stringify(pipelineStage1Result, null, 2));
+                              showToast("JSON copied to clipboard!", "success");
+                            }}
+                            className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 rounded-lg text-xs font-mono font-bold text-cyan-300 transition-all flex items-center gap-2"
+                          >
+                            <span className="material-symbols-outlined text-sm">content_copy</span>
+                            Copy
+                          </button>
+                        </div>
+                        <pre className="bg-black/60 rounded-lg p-4 text-[10px] text-neutral-300 overflow-x-auto border border-white/5 max-h-64 overflow-y-auto">
+                          {JSON.stringify(pipelineStage1Result, null, 2)}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Empty State */}
+                  {!pipelineStage1Result && !isProcessingPipeline && (
+                    <div className="orca-card p-12 text-center space-y-4 border border-dashed border-white/10">
+                      <span className="material-symbols-outlined text-4xl text-neutral-600 block">inbox</span>
+                      <div>
+                        <p className="text-sm font-bold text-neutral-400 mb-2">No Analysis Results Yet</p>
+                        <p className="text-xs text-neutral-500">Click "RUN STAGE 1" to fetch news and analyze through Groq AI</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Stage 2 Card */}
+                  <div className="orca-card p-8 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                          <span className="material-symbols-outlined text-emerald-400 text-2xl">globe</span>
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-bold text-white">Stage 2: Global Macro Analysis</h2>
+                          <p className="text-xs text-neutral-400 font-mono">Analyze global indices for India market signals</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="px-3 py-1 bg-emerald-500/20 border border-emerald-500/30 rounded-lg">
+                          <span className="text-xs font-mono font-bold text-emerald-300">ACTIVE</span>
+                        </div>
+                        <button
+                          onClick={() => setIsPipelineStage2Expanded(!isPipelineStage2Expanded)}
+                          className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                          title={isPipelineStage2Expanded ? "Collapse" : "Expand"}
+                        >
+                          <span className="material-symbols-outlined text-white text-xl">
+                            {isPipelineStage2Expanded ? "expand_less" : "expand_more"}
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {isPipelineStage2Expanded && (
+                      <>
+                        <div className="border-t border-white/10 pt-6 space-y-4">
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                              <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-2">Global Data Source</p>
+                              <p className="text-sm font-mono text-emerald-400">Global Monitor</p>
+                            </div>
+                            <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                              <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-2">Processing Status</p>
+                              <p className="text-sm font-mono text-emerald-400">{isProcessingPipeline ? "PROCESSING..." : "READY"}</p>
+                            </div>
+                          </div>
+
+                          <div className="flex gap-3">
+                            <button
+                              onClick={handlePipelineStage2}
+                              disabled={isProcessingPipeline}
+                              className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-mono text-xs font-bold uppercase transition-all duration-300 outline-none cursor-pointer ${
+                                isProcessingPipeline
+                                  ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 cursor-not-allowed"
+                                  : "bg-emerald-500 text-white hover:bg-emerald-400 border border-emerald-500/50 hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] active:scale-95"
+                              }`}
+                            >
+                              <span className="material-symbols-outlined text-lg">
+                                {isProcessingPipeline ? "hourglass_empty" : "play_arrow"}
+                              </span>
+                              {isProcessingPipeline ? "PROCESSING..." : "RUN STAGE 2"}
+                            </button>
+                          </div>
+
+                          {pipelineError && (
+                            <div className="bg-rose-950/20 border border-rose-500/20 rounded-lg p-4 flex gap-3">
+                              <span className="material-symbols-outlined text-rose-400 shrink-0">error</span>
+                              <div>
+                                <p className="text-xs font-mono text-rose-300 font-bold mb-1">Error</p>
+                                <p className="text-xs text-rose-200">{pipelineError}</p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {/* Stage 2 Results Section */}
+                    {pipelineStage2Result && (
+                      <div className="space-y-6 mt-6">
+                        <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                          <span className="material-symbols-outlined text-emerald-400">check_circle</span>
+                          Global Macro Analysis Results
+                        </h3>
+
+                        {/* Key Metrics */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                          <div className="orca-card p-4 space-y-2">
+                            <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Risk Appetite</p>
+                            <p className={`text-lg font-bold ${
+                              pipelineStage2Result.risk_appetite === "STRONG_RISK_ON" || pipelineStage2Result.risk_appetite === "RISK_ON" ? "text-green-400" :
+                              pipelineStage2Result.risk_appetite === "STRONG_RISK_OFF" || pipelineStage2Result.risk_appetite === "RISK_OFF" ? "text-rose-400" :
+                              "text-yellow-400"
+                            }`}>
+                              {pipelineStage2Result.risk_appetite || "N/A"}
+                            </p>
+                          </div>
+                          <div className="orca-card p-4 space-y-2">
+                            <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Risk Score</p>
+                            <p className="text-lg font-bold text-white">{pipelineStage2Result.risk_score || 0}</p>
+                          </div>
+                          <div className="orca-card p-4 space-y-2">
+                            <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">India Opening Bias</p>
+                            <p className="text-sm font-bold text-white">{pipelineStage2Result.india_opening_bias || "N/A"}</p>
+                          </div>
+                          <div className="orca-card p-4 space-y-2">
+                            <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">FII Flow Expectation</p>
+                            <p className={`text-sm font-bold ${
+                              pipelineStage2Result.fii_flow_expectation?.includes("INFLOW") ? "text-green-400" :
+                              pipelineStage2Result.fii_flow_expectation?.includes("OUTFLOW") ? "text-rose-400" :
+                              "text-yellow-400"
+                            }`}>
+                              {pipelineStage2Result.fii_flow_expectation || "N/A"}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* VIX Details */}
+                        {pipelineStage2Result.vix && (
+                          <div className="orca-card p-6 space-y-4">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="material-symbols-outlined text-yellow-400">trending_up</span>
+                              VIX Analysis
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="bg-black/40 rounded-lg p-3 border border-white/5">
+                                <p className="text-[10px] text-neutral-500 font-mono mb-1">VIX Value</p>
+                                <p className="text-lg font-bold text-white">{pipelineStage2Result.vix.value || "N/A"}</p>
+                              </div>
+                              <div className="bg-black/40 rounded-lg p-3 border border-white/5">
+                                <p className="text-[10px] text-neutral-500 font-mono mb-1">Signal</p>
+                                <p className={`text-lg font-bold ${
+                                  pipelineStage2Result.vix.signal === "PANIC" ? "text-rose-500" :
+                                  pipelineStage2Result.vix.signal === "FEAR" ? "text-orange-500" :
+                                  pipelineStage2Result.vix.signal === "ELEVATED" ? "text-yellow-500" :
+                                  "text-green-500"
+                                }`}>
+                                  {pipelineStage2Result.vix.signal || "N/A"}
+                                </p>
+                              </div>
+                            </div>
+                            <p className="text-xs text-neutral-300">
+                              <span className="font-semibold text-neutral-400">India Implication:</span> {pipelineStage2Result.vix.india_implication || "N/A"}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* DXY Details */}
+                        {pipelineStage2Result.dxy && (
+                          <div className="orca-card p-6 space-y-4">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="material-symbols-outlined text-cyan-400">attach_money</span>
+                              DXY Analysis
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              <div className="bg-black/40 rounded-lg p-3 border border-white/5">
+                                <p className="text-[10px] text-neutral-500 font-mono mb-1">DXY Value</p>
+                                <p className="text-lg font-bold text-white">{pipelineStage2Result.dxy.value || "N/A"}</p>
+                              </div>
+                              <div className="bg-black/40 rounded-lg p-3 border border-white/5">
+                                <p className="text-[10px] text-neutral-500 font-mono mb-1">Direction</p>
+                                <p className="text-lg font-bold text-white">{pipelineStage2Result.dxy.direction || "N/A"}</p>
+                              </div>
+                              <div className="bg-black/40 rounded-lg p-3 border border-white/5">
+                                <p className="text-[10px] text-neutral-500 font-mono mb-1">INR Pressure</p>
+                                <p className={`text-lg font-bold ${
+                                  pipelineStage2Result.dxy.inr_pressure === "POSITIVE" ? "text-green-400" :
+                                  pipelineStage2Result.dxy.inr_pressure === "NEGATIVE" ? "text-rose-400" :
+                                  "text-yellow-400"
+                                }`}>
+                                  {pipelineStage2Result.dxy.inr_pressure || "N/A"}
+                                </p>
+                              </div>
+                            </div>
+                            <p className="text-xs text-neutral-300">
+                              <span className="font-semibold text-neutral-400">FII Implication:</span> {pipelineStage2Result.dxy.fii_implication || "N/A"}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Regional Signals */}
+                        {pipelineStage2Result.regional_signals && (
+                          <div className="orca-card p-6 space-y-4">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="material-symbols-outlined text-purple-400">public</span>
+                              Regional Signals
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                              {/* US */}
+                              <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                                <p className="text-xs font-bold text-white mb-2">US Market</p>
+                                <div className="space-y-2 text-xs">
+                                  <div>
+                                    <span className="text-neutral-500">Direction:</span>
+                                    <span className={`ml-2 font-bold ${
+                                      pipelineStage2Result.regional_signals.us.direction === "UP" ? "text-green-400" :
+                                      pipelineStage2Result.regional_signals.us.direction === "DOWN" ? "text-rose-400" :
+                                      "text-yellow-400"
+                                    }`}>
+                                      {pipelineStage2Result.regional_signals.us.direction}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-neutral-500">Strength:</span>
+                                    <span className="ml-2 text-neutral-300">{pipelineStage2Result.regional_signals.us.strength}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-neutral-500">Breadth:</span>
+                                    <span className="ml-2 text-neutral-300">{pipelineStage2Result.regional_signals.us.breadth}</span>
+                                  </div>
+                                  <p className="text-neutral-300 mt-2">{pipelineStage2Result.regional_signals.us.signal}</p>
+                                </div>
+                              </div>
+
+                              {/* Europe */}
+                              <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                                <p className="text-xs font-bold text-white mb-2">Europe Market</p>
+                                <div className="space-y-2 text-xs">
+                                  <div>
+                                    <span className="text-neutral-500">Direction:</span>
+                                    <span className={`ml-2 font-bold ${
+                                      pipelineStage2Result.regional_signals.europe.direction === "UP" ? "text-green-400" :
+                                      pipelineStage2Result.regional_signals.europe.direction === "DOWN" ? "text-rose-400" :
+                                      "text-yellow-400"
+                                    }`}>
+                                      {pipelineStage2Result.regional_signals.europe.direction}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-neutral-500">Strength:</span>
+                                    <span className="ml-2 text-neutral-300">{pipelineStage2Result.regional_signals.europe.strength}</span>
+                                  </div>
+                                  <p className="text-neutral-300 mt-2">{pipelineStage2Result.regional_signals.europe.signal}</p>
+                                </div>
+                              </div>
+
+                              {/* Asia */}
+                              <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                                <p className="text-xs font-bold text-white mb-2">Asia Market</p>
+                                <div className="space-y-2 text-xs">
+                                  <div>
+                                    <span className="text-neutral-500">Direction:</span>
+                                    <span className={`ml-2 font-bold ${
+                                      pipelineStage2Result.regional_signals.asia.direction === "UP" ? "text-green-400" :
+                                      pipelineStage2Result.regional_signals.asia.direction === "DOWN" ? "text-rose-400" :
+                                      "text-yellow-400"
+                                    }`}>
+                                      {pipelineStage2Result.regional_signals.asia.direction}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-neutral-500">Strength:</span>
+                                    <span className="ml-2 text-neutral-300">{pipelineStage2Result.regional_signals.asia.strength}</span>
+                                  </div>
+                                  <p className="text-neutral-300 mt-2">
+                                    <span className="font-semibold">Nikkei:</span> {pipelineStage2Result.regional_signals.asia.nikkei_signal || "N/A"}
+                                  </p>
+                                  <p className="text-neutral-300">
+                                    <span className="font-semibold">Hang Seng:</span> {pipelineStage2Result.regional_signals.asia.hangseng_signal || "N/A"}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Key Divergences */}
+                        {pipelineStage2Result.key_divergences && pipelineStage2Result.key_divergences.length > 0 && (
+                          <div className="orca-card p-6 space-y-4">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="material-symbols-outlined text-orange-400">warning</span>
+                              Key Divergences
+                            </h4>
+                            <div className="space-y-2">
+                              {pipelineStage2Result.key_divergences.map((divergence: string, idx: number) => (
+                                <div key={idx} className="bg-black/40 rounded-lg p-3 border border-white/5 text-sm text-neutral-300">
+                                  {divergence}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Sector Benefit Order */}
+                        {pipelineStage2Result.sector_benefit_order && (
+                          <div className="orca-card p-6 space-y-4">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="material-symbols-outlined text-emerald-400">category</span>
+                              Sector Benefit Order
+                            </h4>
+                            <div className="flex flex-wrap gap-2">
+                              {pipelineStage2Result.sector_benefit_order.map((sector: string, idx: number) => (
+                                <div key={idx} className="px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/30 rounded-lg">
+                                  <span className="text-xs font-bold text-emerald-300 font-mono">{sector}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Primary Risk */}
+                        {pipelineStage2Result.primary_risk && (
+                          <div className="orca-card p-6 space-y-4">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="material-symbols-outlined text-rose-400">shield_warning</span>
+                              Primary Risk
+                            </h4>
+                            <p className="text-sm text-neutral-300">{pipelineStage2Result.primary_risk}</p>
+                          </div>
+                        )}
+
+                        {/* India Opening Rationale */}
+                        {pipelineStage2Result.india_opening_rationale && (
+                          <div className="orca-card p-6 space-y-4">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="material-symbols-outlined text-cyan-400">lightbulb</span>
+                              Opening Rationale
+                            </h4>
+                            <p className="text-sm text-neutral-300 leading-relaxed">{pipelineStage2Result.india_opening_rationale}</p>
+                          </div>
+                        )}
+
+                        {/* Raw JSON Response */}
+                        <div className="orca-card p-6 space-y-4">
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                              <span className="material-symbols-outlined text-cyan-400">code</span>
+                              Raw Analysis JSON
+                            </h4>
+                            <button
+                              onClick={() => {
+                                navigator.clipboard.writeText(JSON.stringify(pipelineStage2Result, null, 2));
+                                showToast("Stage 2 JSON copied to clipboard!", "success");
+                              }}
+                              className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 rounded-lg text-xs font-mono font-bold text-cyan-300 transition-all flex items-center gap-2"
+                            >
+                              <span className="material-symbols-outlined text-sm">content_copy</span>
+                              Copy
+                            </button>
+                          </div>
+                          <pre className="bg-black/60 rounded-lg p-4 text-[10px] text-neutral-300 overflow-x-auto border border-white/5 max-h-64 overflow-y-auto">
+                            {JSON.stringify(pipelineStage2Result, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Empty State for Stage 2 */}
+                  {!pipelineStage2Result && !isProcessingPipeline && (
+                    <div className="orca-card p-12 text-center space-y-4 border border-dashed border-white/10">
+                      <span className="material-symbols-outlined text-4xl text-neutral-600 block">inbox</span>
+                      <div>
+                        <p className="text-sm font-bold text-neutral-400 mb-2">No Global Macro Analysis Yet</p>
+                        <p className="text-xs text-neutral-500">Click "RUN STAGE 2" to analyze global indices through Groq AI</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+
+            {/* TAB: EARNINGS FEED */}
+            {activeTab === "earnings-feed" && (
+              <div className="flex flex-col h-full space-y-6 animate-in fade-in duration-300">
+                {/* HEADER */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <div className="flex items-center gap-3">
+                      <FileText className="w-6 h-6 text-emerald-400" />
+                      <div>
+                        <h2 className="text-xl font-extrabold text-white uppercase tracking-tight font-mono">Earnings Feed</h2>
+                        <p className="text-xs text-neutral-400 font-mono mt-0.5">Live market earnings feed with detailed extracted metrics</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleScrapeEarningsFeed}
+                      disabled={isScrapingEarningsFeed}
+                      className="flex items-center gap-2 px-4 py-2 bg-emerald-400/20 hover:bg-emerald-400 hover:text-black border border-emerald-400/30 text-emerald-400 font-semibold text-[10px] font-mono tracking-widest rounded-lg transition-all disabled:opacity-50"
+                    >
+                      {isScrapingEarningsFeed ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin"></div>
+                          LOADING...
+                        </>
+                      ) : (
+                        <>
+                          <RotateCw className="w-3.5 h-3.5" />
+                          REFRESH
+                        </>
+                      )}
+                    </button>
+
+                    {earningsFeedData?.fetched_at && (
+                      <span className="text-[9px] font-mono text-neutral-500">
+                        Last: {new Date(earningsFeedData.fetched_at).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* SEARCH */}
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
+                  <input
+                    type="text"
+                    value={earningsFeedSearchQuery}
+                    onChange={(e) => setEarningsFeedSearchQuery(e.target.value)}
+                    placeholder="Search companies..."
+                    className="w-full pl-10 pr-4 py-2 bg-black/40 border border-white/10 rounded-xl text-sm font-mono text-white placeholder:text-neutral-500 focus:outline-none focus:border-emerald-400/50"
+                  />
+                </div>
+
+                {/* RESULTS TABLE */}
+                <div className="bg-black/40 backdrop-blur-3xl rounded-2xl border border-white/5 p-5 hover:border-white/10 transition-all shadow-[0_4px_30px_rgba(0,0,0,0.4)]">
+                  <h3 className="font-mono text-sm font-bold text-emerald-400 uppercase tracking-wider mb-4">
+                    Earnings Results (Past 30 Days)
+                  </h3>
+
+                  {isScrapingEarningsFeed && (!earningsFeedData || earningsFeedData.results?.length === 0) ? (
+                    <div className="py-12 text-center text-neutral-500">
+                      <div className="w-8 h-8 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                      <p className="text-sm font-mono">Fetching live earnings and parsing detailed metrics...</p>
+                    </div>
+                  ) : !earningsFeedData || earningsFeedData.results?.length === 0 ? (
+                    <div className="py-12 text-center text-neutral-500 border border-dashed border-white/5 bg-white/[0.01] rounded-xl">
+                      <FileText className="w-8 h-8 mx-auto mb-3 text-neutral-600" />
+                      <p className="text-sm font-mono">No earnings data available.</p>
+                      <button
+                        onClick={handleScrapeEarningsFeed}
+                        className="mt-4 px-4 py-2 bg-emerald-400/20 hover:bg-emerald-400 hover:text-black text-emerald-400 text-xs font-mono rounded-lg transition-all"
+                      >
+                        Fetch Earnings
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto max-h-[600px]">
+                      <table className="w-full text-xs font-mono">
+                        <thead className="sticky top-0 bg-neutral-900">
+                          <tr className="border-b border-white/10 text-left">
+                            <th className="py-3 px-4 text-neutral-400 font-bold">Company</th>
+                            <th className="py-3 px-4 text-neutral-400 font-bold">Symbol</th>
+                            <th className="py-3 px-4 text-neutral-400 font-bold">Period</th>
+                            <th className="py-3 px-4 text-neutral-400 font-bold">Revenue</th>
+                            <th className="py-3 px-4 text-neutral-400 font-bold">PAT</th>
+                            <th className="py-3 px-4 text-neutral-400 font-bold">EPS</th>
+                            <th className="py-3 px-4 text-neutral-400 font-bold">Source</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(earningsFeedData.results || [])
+                            .filter((company: any) =>
+                              earningsFeedSearchQuery
+                                ? company.company_name?.toLowerCase().includes(earningsFeedSearchQuery.toLowerCase()) ||
+                                  company.symbol?.toLowerCase().includes(earningsFeedSearchQuery.toLowerCase())
+                                : true
+                            )
+                            .map((company: any, idx: number) => (
+                              <tr key={`earn-${idx}`} className="border-b border-white/5 hover:bg-white/[0.02] transition-colors">
+                                <td className="py-3 px-4 text-white font-medium">{company.company_name}</td>
+                                <td className="py-3 px-4 text-cyan-400">{company.symbol || "-"}</td>
+                                <td className="py-3 px-4 text-neutral-300">{company.period || "-"}</td>
+                                <td className="py-3 px-4 text-white">{company.revenue || "-"}</td>
+                                <td className="py-3 px-4 text-white">{company.pat || "-"}</td>
+                                <td className="py-3 px-4 text-white">{company.eps || "-"}</td>
+                                <td className="py-3 px-4 text-neutral-400">{company.source}</td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* TAB FIVE: GLOBAL ETFS VIEW SCREEN */}
             {activeTab === "etfs" && (
               <div className="space-y-10">
@@ -3629,6 +4987,155 @@ export default function App() {
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+                </div>
+
+                {/* FEED CARD — IndStocks Market News */}
+                <div className="bg-black/40 backdrop-blur-3xl rounded-2xl border border-white/5 p-5 hover:border-white/10 transition-all shadow-[0_4px_30px_rgba(0,0,0,0.4)]">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-mono text-sm font-bold text-emerald-400 uppercase tracking-wider">
+                      Feed
+                    </h3>
+                    <div className="flex items-center gap-3">
+                      {indStocksFeedData?.fetched_at && (
+                        <span className="text-[9px] font-mono text-neutral-500">
+                          Last: {new Date(indStocksFeedData.fetched_at).toLocaleTimeString()}
+                        </span>
+                      )}
+                      <button
+                        onClick={handleScrapeIndStocksFeed}
+                        disabled={isScrapingIndStocksFeed}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-400/20 hover:bg-emerald-400 hover:text-black border border-emerald-400/30 text-emerald-400 font-semibold text-[9px] font-mono tracking-widest rounded-lg transition-all disabled:opacity-50"
+                      >
+                        {isScrapingIndStocksFeed ? (
+                          <>
+                            <div className="w-2.5 h-2.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                            LOADING...
+                          </>
+                        ) : (
+                          <>
+                            <RotateCw className="w-3 h-3" />
+                            REFRESH
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Search */}
+                  <div className="relative mb-4">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-neutral-500" />
+                    <input
+                      type="text"
+                      value={indStocksFeedSearchQuery}
+                      onChange={(e) => setIndStocksFeedSearchQuery(e.target.value)}
+                      placeholder="Search news..."
+                      className="w-full pl-9 pr-4 py-2 bg-black/40 border border-white/10 rounded-xl text-xs font-mono text-white placeholder:text-neutral-500 focus:outline-none focus:border-emerald-400/50"
+                    />
+                  </div>
+
+                  {isScrapingIndStocksFeed && (!indStocksFeedData || indStocksFeedData.items?.length === 0) ? (
+                    <div className="py-10 text-center text-neutral-500">
+                      <div className="w-6 h-6 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                      <p className="text-xs font-mono">Fetching market news from IndStocks...</p>
+                    </div>
+                  ) : !indStocksFeedData || indStocksFeedData.items?.length === 0 ? (
+                    <div className="py-12 text-center text-neutral-500 border border-dashed border-white/5 bg-white/[0.01] rounded-xl">
+                      <Newspaper className="w-8 h-8 mx-auto mb-3 text-neutral-600" />
+                      <p className="text-sm font-mono">No market news available.</p>
+                      <button
+                        onClick={handleScrapeIndStocksFeed}
+                        className="mt-4 px-4 py-2 bg-emerald-400/20 hover:bg-emerald-400 hover:text-black text-emerald-400 text-xs font-mono rounded-lg transition-all"
+                      >
+                        Fetch News
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                      {(indStocksFeedData.items || [])
+                        .filter((item: any) =>
+                          indStocksFeedSearchQuery
+                            ? item.title?.toLowerCase().includes(indStocksFeedSearchQuery.toLowerCase()) ||
+                              item.summary?.toLowerCase().includes(indStocksFeedSearchQuery.toLowerCase())
+                            : true
+                        )
+                        .map((item: any, idx: number) => {
+                          const timeAgo = (() => {
+                            if (!item.published_at) return "";
+                            try {
+                              const pubDate = new Date(item.published_at);
+                              const diffMs = Date.now() - pubDate.getTime();
+                              const diffMins = Math.floor(diffMs / 60000);
+                              if (diffMins < 60) return `${diffMins}m ago`;
+                              const diffHrs = Math.floor(diffMins / 60);
+                              if (diffHrs < 24) return `${diffHrs}h ago`;
+                              return `${Math.floor(diffHrs / 24)}d ago`;
+                            } catch {
+                              return "";
+                            }
+                          })();
+
+                          return (
+                            <div
+                              key={`feed-${idx}`}
+                              className="flex gap-3 p-3 bg-black/40 backdrop-blur-3xl border border-white/5 rounded-2xl hover:border-emerald-400/20 hover:bg-white/[0.02] transition-all group shadow-[0_4px_30px_rgba(0,0,0,0.4)]"
+                            >
+                              {item.image_url && (
+                                <img
+                                  src={item.image_url}
+                                  alt=""
+                                  className="w-16 h-16 rounded-lg object-cover flex-shrink-0 opacity-80 group-hover:opacity-100 transition-opacity"
+                                  onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+                                />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                  {item.source && (
+                                    <span className="text-[9px] font-mono text-neutral-500">{item.source}</span>
+                                  )}
+                                  {timeAgo && (
+                                    <span className="text-[9px] font-mono text-neutral-600 ml-auto">{timeAgo}</span>
+                                  )}
+                                </div>
+                                {item.url ? (
+                                  <a
+                                    href={item.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-xs font-mono text-white font-semibold leading-snug hover:text-emerald-400 transition-colors line-clamp-2 block"
+                                  >
+                                    {item.title}
+                                  </a>
+                                ) : (
+                                  <p className="text-xs font-mono text-white font-semibold leading-snug line-clamp-2">
+                                    {item.title}
+                                  </p>
+                                )}
+                                {item.summary && (
+                                  <p className="text-[10px] font-mono text-neutral-400 mt-1 leading-relaxed line-clamp-2">
+                                    {item.summary}
+                                  </p>
+                                )}
+                                {item.related_stocks && item.related_stocks.length > 0 && (
+                                  <div className="flex gap-1.5 mt-2 flex-wrap">
+                                    {item.related_stocks.slice(0, 5).map((stock: string, si: number) => (
+                                      <span
+                                        key={`stock-${si}`}
+                                        className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-neutral-300"
+                                      >
+                                        {stock}
+                                      </span>
+                                    ))}
+                                    {item.related_stocks.length > 5 && (
+                                      <span className="text-[8px] font-mono text-neutral-600">+{item.related_stocks.length - 5}</span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
                     </div>
                   )}
                 </div>

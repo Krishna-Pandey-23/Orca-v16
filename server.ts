@@ -883,6 +883,62 @@ function startLiveEarningsPolling() {
   });
 }
 
+// ========== INDSTOCKS MARKET NEWS FEED API ==========
+
+import { scrapeMarketNews } from "./server-indstocks-news-scraper";
+import { scrapeEarningsResults } from "./server-earnings-rss";
+
+const PATH_INDSTOCKS_FEED = path.join(DATA_DIR, "data-indstocks-feed.json");
+
+app.get("/api/indstocks-feed", (req, res) => {
+  const db = loadDB(PATH_INDSTOCKS_FEED, {
+    section: "Today's Market News",
+    page_url: "https://www.indstocks.com/investments/stocks/explore-all",
+    fetched_at: new Date().toISOString(),
+    total_count: 0,
+    items: []
+  });
+  res.json(db);
+});
+
+app.post("/api/indstocks-feed/scrape", async (req, res) => {
+  try {
+    console.log("[Server] Scraping IndStocks market news feed...");
+    const scrapedData = await scrapeMarketNews();
+    saveDB(PATH_INDSTOCKS_FEED, scrapedData);
+    res.json({ success: true, data: scrapedData });
+  } catch (err: any) {
+    console.error("IndStocks feed scraping failed:", err);
+    res.status(500).json({ error: err.message || "Failed to scrape IndStocks market news feed" });
+  }
+});
+
+// ========== EARNINGS FEED API ==========
+
+const PATH_EARNINGS_FEED = path.join(DATA_DIR, "data-earnings-feed.json");
+
+app.get("/api/earnings-feed", (req, res) => {
+  const db = loadDB(PATH_EARNINGS_FEED, {
+    section: "Company Earnings Results — Past 30 Days",
+    fetched_at: new Date().toISOString(),
+    total_count: 0,
+    results: []
+  });
+  res.json(db);
+});
+
+app.post("/api/earnings-feed/scrape", async (req, res) => {
+  try {
+    console.log("[Server] Scraping earnings results from NSE, BSE & Economic Times...");
+    const scrapedData = await scrapeEarningsResults();
+    saveDB(PATH_EARNINGS_FEED, scrapedData);
+    res.json({ success: true, data: scrapedData });
+  } catch (err: any) {
+    console.error("Earnings feed scraping failed:", err);
+    res.status(500).json({ error: err.message || "Failed to scrape earnings results" });
+  }
+});
+
 // ========== INDSTOCKS LIVE NEWS SCRAPER API ==========
 
 const PATH_INDSTOCKS = path.join(DATA_DIR, "data-indstocks-live.json");
