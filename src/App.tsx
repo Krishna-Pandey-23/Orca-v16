@@ -120,6 +120,8 @@ export default function App() {
   const [pipelineError, setPipelineError] = useState<string | null>(null);
   const [isPipelineStage1Expanded, setIsPipelineStage1Expanded] = useState<boolean>(true);
   const [isPipelineStage2Expanded, setIsPipelineStage2Expanded] = useState<boolean>(true);
+  const [pipelineStage3Result, setPipelineStage3Result] = useState<any>(null);
+  const [isProcessingStage3, setIsProcessingStage3] = useState<boolean>(false);
 
   /**
    * Parses news timestamp string to Date object (IST timezone).
@@ -916,27 +918,20 @@ export default function App() {
       showToast(`Analyzing ${uniqueNews.length} headlines from ${yesterday3PM.toLocaleString('en-IN', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })} to now...`, "info");
 
       // Step 5: Build the prompt with headlines
-      const systemPrompt = `SYSTEM:You are a Senior Quantitative Equity Research Analyst at a premier Indian institutional fund with 20+ years of BSE/NSE experience. Your core objective: distill market noise into high-conviction, actionable investment signals.HARD RULES:1. STRICT GROUNDING: Never hallucinate or infer a stock ticker. The company name or ticker MUST explicitly appear in the provided headline text.2. DEDUPLICATION: Multiple headlines covering the exact same corporate event or macro data point must be consolidated into ONE single signal.3. ISOLATED SENTIMENT: Derive sentiment strictly from the provided text. Do not project external context, historical performance, or future expectations outside the text.4. CONFIDENCE SCORING: - 1 headline = Maximum confidence of 50.- 2 headlines = Maximum confidence of 70.- 3+ headlines = Maximum confidence of 90.5. BLANK FALLBACK: If no clear signal exists for a category, return an empty array or null. Do not force a fit.6. OUTPUT FORMAT: Return strictly valid JSON. RECOMMENT ATLEAST 10 STOCKS .Do not use markdown wrappers, formatting, or introductory/concluding text.OUTPUT SCHEMA:{"_analysis_scratchpad": "Briefly map headlines to sectors/stocks and note overlapping events before generating signals. Keep it under 50 words.","analysis_timestamp": "ISO8601","headline_count": 0,"dominant_sentiment": "BULLISH|BEARISH|MIXED|NEUTRAL","market_mood_score": "Integer from -100 to 100","themes": {"bullish": [{"theme":"string","supporting_headlines":0,"confidence":0,"key_stocks_mentioned":["NSE_SYMBOL"]}],"bearish": [{"theme":"string","supporting_headlines":0,"confidence":0,"key_stocks_mentioned":["NSE_SYMBOL"]}]},"stock_signals": [{"symbol": "NSE_SYMBOL or null","company": "string","direction": "POSITIVE|NEGATIVE|NEUTRAL","confidence": 0,"catalyst": "EARNINGS|FII_DII|SECTOR_TREND|POLICY|MACRO|CORPORATE_ACTION|MANAGEMENT_COMMENTARY|OTHER","signal_rationale": "One concise sentence. State the event and its immediate trading implication.","headline_count": 0}],"sector_signals": {"BANKING": "BULLISH|BEARISH|NEUTRAL","IT": "BULLISH|BEARISH|NEUTRAL","DEFENSE": "BULLISH|BEARISH|NEUTRAL","RENEWABLES": "BULLISH|BEARISH|NEUTRAL","AUTO": "BULLISH|BEARISH|NEUTRAL","ENERGY": "BULLISH|BEARISH|NEUTRAL","PHARMA": "BULLISH|BEARISH|NEUTRAL","FMCG": "BULLISH|BEARISH|NEUTRAL","INFRA": "BULLISH|BEARISH|NEUTRAL"},"policy_signals": ["string"],"data_quality": "HIGH|MEDIUM|LOW","data_quality_reason": "string"}USER:TASK: Extract investment signals from Indian market headlines published between ${yesterday3PM.toLocaleString('en-IN')} and ${now.toLocaleString('en-IN')} (IST).
+      const systemPrompt = `SYSTEM:You are a Senior Quantitative Equity Research Analyst at a premier Indian institutional fund with 20+ years of BSE/NSE experience. Your core objective: distill market noise into high-conviction, actionable investment signals.HARD RULES:1. STRICT GROUNDING: Never hallucinate or infer a stock ticker. The company name or ticker MUST explicitly appear in the provided headline text.2. DEDUPLICATION: Multiple headlines covering the exact same corporate event or macro data point must be consolidated into ONE single signal.3. ISOLATED SENTIMENT: Derive sentiment strictly from the provided text. Do not project external context, historical performance, or future expectations outside the text.4. CONFIDENCE SCORING: - 1 headline = Maximum confidence of 50.- 2 headlines = Maximum confidence of 70.- 3+ headlines = Maximum confidence of 90.5. BLANK FALLBACK: If no clear signal exists for a category, return an empty array or null. Do not force a fit.6. OUTPUT FORMAT: Return strictly valid JSON.  STRICTLY RECOMMENT ATLEAST 10 STOCKS AND MAKE SURE TO FILL ALL THE SECTIONS OF THE RESPONSE JSON .Do not use markdown wrappers, formatting, or introductory/concluding text.OUTPUT SCHEMA:{"_analysis_scratchpad": "Briefly map headlines to sectors/stocks and note overlapping events before generating signals. Keep it under 50 words.","analysis_timestamp": "ISO8601","headline_count": 0,"dominant_sentiment": "BULLISH|BEARISH|MIXED|NEUTRAL","market_mood_score": "Integer from -100 to 100","themes": {"bullish": [{"theme":"string","supporting_headlines":0,"confidence":0,"key_stocks_mentioned":["NSE_SYMBOL"]}],"bearish": [{"theme":"string","supporting_headlines":0,"confidence":0,"key_stocks_mentioned":["NSE_SYMBOL"]}]},"stock_signals": [{"symbol": "NSE_SYMBOL or null","company": "string","direction": "POSITIVE|NEGATIVE|NEUTRAL","confidence": 0,"catalyst": "EARNINGS|FII_DII|SECTOR_TREND|POLICY|MACRO|CORPORATE_ACTION|MANAGEMENT_COMMENTARY|OTHER","signal_rationale": "One concise sentence. State the event and its immediate trading implication.","headline_count": 0}],"sector_signals": {"BANKING": "BULLISH|BEARISH|NEUTRAL","IT": "BULLISH|BEARISH|NEUTRAL","DEFENSE": "BULLISH|BEARISH|NEUTRAL","RENEWABLES": "BULLISH|BEARISH|NEUTRAL","AUTO": "BULLISH|BEARISH|NEUTRAL","ENERGY": "BULLISH|BEARISH|NEUTRAL","PHARMA": "BULLISH|BEARISH|NEUTRAL","FMCG": "BULLISH|BEARISH|NEUTRAL","INFRA": "BULLISH|BEARISH|NEUTRAL"},"policy_signals": ["string"],"data_quality": "HIGH|MEDIUM|LOW","data_quality_reason": "string"}USER:TASK: Extract investment signals from Indian market headlines published between ${yesterday3PM.toLocaleString('en-IN')} and ${now.toLocaleString('en-IN')} (IST).
 
 TOTAL HEADLINES: ${uniqueNews.length}
 ANALYSIS WINDOW: ${yesterday3PM.toLocaleString('en-IN')} to ${now.toLocaleString('en-IN')} (IST)
 HEADLINES (Format: Title | Summary [Source] (Topic)):
 ${headlinesText}`;
 
-      // Step 6: Make 2 API calls sequentially with delays to avoid rate limits
-      showToast(`Making 2 API calls for robust analysis (sequential)...`, "info");
+      // Step 6: Make 1 API call
+      showToast(`Making 1 API call for analysis...`, "info");
       
-      const allAnalysisResults = [];
+      // Add delay before the call
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
-      for (let i = 0; i < 2; i++) {
-        try {
-          // Add delay before each call (except the first one)
-          if (i > 0) {
-            console.log(`[Pipeline] Waiting 2 seconds before API call ${i + 1}/2...`);
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          }
-          
-          console.log(`[Pipeline] API call ${i + 1}/2 started`);
+      console.log(`[Pipeline] API call 1/1 started`);
           
           const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
             method: "POST",
@@ -946,6 +941,7 @@ ${headlinesText}`;
             },
             body: JSON.stringify({
               model: "llama-3.1-8b-instant",
+              response_format: { type: "json_object" },
               messages: [
                 {
                   role: "user",
@@ -962,38 +958,24 @@ ${headlinesText}`;
 
           const data = await response.json();
           const analysisText = data.choices?.[0]?.message?.content || "";
-          console.log(`[Pipeline] API call ${i + 1}/2 completed, response length: ${analysisText.length} chars`);
+          console.log(`[Pipeline] API call 1/1 completed, response length: ${analysisText.length} chars`);
 
           // Parse JSON from response
+          let analysisResult: any;
           try {
-            const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-              allAnalysisResults.push(JSON.parse(jsonMatch[0]));
-            } else {
-              allAnalysisResults.push(JSON.parse(analysisText));
-            }
-            console.log(`[Pipeline] API call ${i + 1}/2 JSON parsed successfully`);
+            const cleaned = analysisText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+            analysisResult = JSON.parse(cleaned);
+            console.log(`[Pipeline] API call 1/1 JSON parsed successfully`);
           } catch (parseErr) {
-            console.error(`[Pipeline] API call ${i + 1}/2 Failed to parse JSON:`, analysisText);
-            allAnalysisResults.push({
-              raw_response: analysisText,
-              parse_error: "Could not parse JSON from response",
-            });
+            console.error(`[Pipeline] API call 1/1 Failed to parse JSON:`, analysisText);
+            throw new Error(`JSON parse failed: ${analysisText.slice(0, 200)}`);
           }
-        } catch (err: any) {
-          console.error(`[Pipeline] API call ${i + 1}/2 failed:`, err.message);
-          throw err;
-        }
-      }
 
-      console.log(`[Pipeline] All 2 API calls completed successfully`);
-      
-      // Combine results from all API calls
-      const combinedResult = combinePipelineResults(allAnalysisResults);
-      console.log(`[Pipeline] Combined results from ${allAnalysisResults.length} API calls`);
+          setPipelineStage1Result(analysisResult);
+          console.log(`[Pipeline] API call 1/1 completed successfully`);
 
-      setPipelineStage1Result(combinedResult);
-      showToast(`Pipeline Stage 1 analysis completed successfully (${allAnalysisResults.length} API calls)!`, "success");
+      setPipelineStage1Result(analysisResult);
+      showToast(`Pipeline Stage 1 analysis completed successfully!`, "success");
     } catch (err: any) {
       console.error("Pipeline Stage 1 error:", err);
       const errorMessage = err.message || "Failed to process pipeline stage 1";
@@ -1085,6 +1067,7 @@ ${headlinesText}`;
         },
         body: JSON.stringify({
           model: "llama-3.1-8b-instant",
+          response_format: { type: "json_object" },
           messages: [
             {
               role: "system",
@@ -1113,19 +1096,12 @@ ${headlinesText}`;
       // Parse JSON from response
       let analysisResult: any;
       try {
-        const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          analysisResult = JSON.parse(jsonMatch[0]);
-        } else {
-          analysisResult = JSON.parse(analysisText);
-        }
+        const cleaned = analysisText.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```\s*$/i, "").trim();
+        analysisResult = JSON.parse(cleaned);
         console.log(`[Pipeline Stage 2] JSON parsed successfully:`, Object.keys(analysisResult));
       } catch (parseErr) {
         console.error(`[Pipeline Stage 2] Failed to parse JSON:`, analysisText);
-        analysisResult = {
-          raw_response: analysisText,
-          parse_error: "Could not parse JSON from response",
-        };
+        throw new Error(`Stage 2 JSON parse failed: ${analysisText.slice(0, 200)}`);
       }
 
       setPipelineStage2Result(analysisResult);
@@ -1137,6 +1113,36 @@ ${headlinesText}`;
       showToast(errorMessage, "error");
     } finally {
       setIsProcessingPipeline(false);
+    }
+  };
+
+  // Pipeline Stage 3: ETF Analysis
+  const handlePipelineStage3 = async () => {
+    setIsProcessingStage3(true);
+    setPipelineError(null);
+    showToast("Executing live active web crawlers over 14 Global ETF categories...", "info");
+
+    try {
+      const res = await fetch("/api/etfs/scrape", { method: "POST" });
+      if (!res.ok) {
+        throw new Error("Failed to fetch ETF data from active scraper");
+      }
+      const data = await res.json();
+
+      console.log("[Pipeline Stage 3] ETF data fetched:", Object.keys(data.db));
+      setPipelineStage3Result(data.db);
+      setEtfsData(data.db);
+      if (data.db.scrapedCategories && data.db.scrapedCategories.length > 0) {
+        setSelectedScrapedCategory(data.db.scrapedCategories[0].category);
+      }
+      showToast("Pipeline Stage 3 ETF data fetched successfully!", "success");
+    } catch (err: any) {
+      console.error("Pipeline Stage 3 error:", err);
+      const errorMessage = err.message || "Failed to fetch ETF data";
+      setPipelineError(errorMessage);
+      showToast(errorMessage, "error");
+    } finally {
+      setIsProcessingStage3(false);
     }
   };
 
@@ -3754,6 +3760,7 @@ ${headlinesText}`;
                         </div>
                       </>
                     )}
+                  </div>
 
                     {/* Stage 2 Results Section */}
                     {pipelineStage2Result && (
@@ -4024,7 +4031,163 @@ ${headlinesText}`;
                         </div>
                       </div>
                     )}
+
+                      {/* Stage 3 Card */}
+                  <div className="orca-card p-8 space-y-6">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-xl bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center">
+                          <span className="material-symbols-outlined text-cyan-400 text-2xl">wallet</span>
+                        </div>
+                        <div>
+                          <h2 className="text-xl font-bold text-white">Stage 3: Global ETFs Terminal</h2>
+                          <p className="text-xs text-neutral-400 font-mono">Fetch real-time ETF data from institutional terminal</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="px-3 py-1 bg-cyan-500/20 border border-cyan-500/30 rounded-lg">
+                          <span className="text-xs font-mono font-bold text-cyan-300">ACTIVE</span>
+                        </div>
+                        <button
+                          onClick={() => {
+                            // Stage 3 is always expanded, no expand/collapse needed
+                          }}
+                          className="p-2 hover:bg-white/10 rounded-lg transition-colors cursor-not-allowed"
+                          title="Always active"
+                        >
+                          <span className="material-symbols-outlined text-white text-xl">lock</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-white/10 pt-6 space-y-4">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                          <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-2">ETF Data Source</p>
+                          <p className="text-sm font-mono text-cyan-400">Global ETF Terminal</p>
+                        </div>
+                        <div className="bg-black/40 rounded-lg p-4 border border-white/5">
+                          <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest mb-2">Processing Status</p>
+                          <p className="text-sm font-mono text-cyan-400">{isProcessingStage3 ? "PROCESSING..." : "READY"}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3">
+                        <button
+                          onClick={handlePipelineStage3}
+                          disabled={isProcessingStage3}
+                          className={`flex-1 flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-mono text-xs font-bold uppercase transition-all duration-300 outline-none cursor-pointer ${
+                            isProcessingStage3
+                              ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 cursor-not-allowed"
+                              : "bg-cyan-500 text-white hover:bg-cyan-400 border border-cyan-500/50 hover:shadow-[0_0_20px_rgba(0,240,255,0.4)] active:scale-95"
+                          }`}
+                        >
+                          <span className="material-symbols-outlined text-lg">
+                            {isProcessingStage3 ? "hourglass_empty" : "cloud_download"}
+                          </span>
+                          {isProcessingStage3 ? "PROCESSING..." : "FETCH ETF DATA"}
+                        </button>
+                      </div>
+
+                      {pipelineError && (
+                        <div className="bg-rose-950/20 border border-rose-500/20 rounded-lg p-4 flex gap-3">
+                          <span className="material-symbols-outlined text-rose-400 shrink-0">error</span>
+                          <div>
+                            <p className="text-xs font-mono text-rose-300 font-bold mb-1">Error</p>
+                            <p className="text-xs text-rose-200">{pipelineError}</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   </div>
+
+                  {/* Results Section for Stage 3 */}
+                  {pipelineStage3Result && (
+                    <div className="space-y-6">
+                      <h3 className="text-lg font-bold text-white flex items-center gap-2">
+                        <span className="material-symbols-outlined text-cyan-400">check_circle</span>
+                        ETF Data Results
+                      </h3>
+
+                      {/* ETF Metadata */}
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="orca-card p-4 space-y-2">
+                          <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Global Flow Status</p>
+                          <p className="text-lg font-bold text-cyan-400">{pipelineStage3Result.globalFlowStatus || "N/A"}</p>
+                        </div>
+                        <div className="orca-card p-4 space-y-2">
+                          <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Total Categories</p>
+                          <p className="text-lg font-bold text-white">{pipelineStage3Result.scrapedCategories?.length || 0}</p>
+                        </div>
+                        <div className="orca-card p-4 space-y-2">
+                          <p className="text-[10px] text-neutral-500 font-mono uppercase tracking-widest">Last Scraped</p>
+                          <p className="text-lg font-bold text-white">{pipelineStage3Result.lastScrapedAt ? new Date(pipelineStage3Result.lastScrapedAt).toLocaleString() : "N/A"}</p>
+                        </div>
+                      </div>
+
+                      {/* ETF Categories */}
+                      {pipelineStage3Result.scrapedCategories && pipelineStage3Result.scrapedCategories.length > 0 && (
+                        <div className="orca-card p-6 space-y-4">
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                            <span className="material-symbols-outlined text-emerald-400">category</span>
+                            Ingested ETF Categories ({pipelineStage3Result.scrapedCategories.length})
+                          </h4>
+                          <div className="space-y-3 max-h-96 overflow-y-auto">
+                            {pipelineStage3Result.scrapedCategories.map((cat: any, idx: number) => (
+                              <div key={idx} className="bg-black/40 rounded-lg p-4 border border-white/5 space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <p className="font-mono font-bold text-white">{cat.category}</p>
+                                    <p className="text-xs text-neutral-400">{cat.url}</p>
+                                  </div>
+                                  <span className="px-2 py-1 rounded text-xs font-bold font-mono bg-cyan-500/20 text-cyan-400">
+                                    {cat.rows.length} ETFs
+                                  </span>
+                                </div>
+                                <div className="flex gap-2 text-[10px] text-neutral-500">
+                                  <span>Fetched: {new Date(cat.fetched_at).toLocaleString()}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Raw JSON Response */}
+                      <div className="orca-card p-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                            <span className="material-symbols-outlined text-cyan-400">code</span>
+                            Raw ETF Data JSON
+                          </h4>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(JSON.stringify(pipelineStage3Result, null, 2));
+                              showToast("ETF data JSON copied to clipboard!", "success");
+                            }}
+                            className="px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 rounded-lg text-xs font-mono font-bold text-cyan-300 transition-all flex items-center gap-2"
+                          >
+                            <span className="material-symbols-outlined text-sm">content_copy</span>
+                            Copy
+                          </button>
+                        </div>
+                        <pre className="bg-black/60 rounded-lg p-4 text-[10px] text-neutral-300 overflow-x-auto border border-white/5 max-h-64 overflow-y-auto">
+                          {JSON.stringify(pipelineStage3Result, null, 2)}
+                        </pre>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Empty State for Stage 3 */}
+                  {!pipelineStage3Result && !isProcessingStage3 && (
+                    <div className="orca-card p-12 text-center space-y-4 border border-dashed border-white/10">
+                      <span className="material-symbols-outlined text-4xl text-neutral-600 block">inbox</span>
+                      <div>
+                        <p className="text-sm font-bold text-neutral-400 mb-2">No ETF Data Yet</p>
+                        <p className="text-xs text-neutral-500">Click "FETCH ETF DATA" to retrieve real-time data from Global ETF Terminal</p>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Empty State for Stage 2 */}
                   {!pipelineStage2Result && !isProcessingPipeline && (

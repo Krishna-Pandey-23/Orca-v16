@@ -1187,20 +1187,28 @@ app.post("/api/world-indices/scrape", async (req, res) => {
   }
 });
 
+const emptyEtfsDb = {
+  etfs: [],
+  scrapedCategories: [],
+  globalFlowStatus: "PENDING CRAWL",
+  lastScrapedAt: null
+};
+
 // ========== ETF API ENDPOINTS ==========
 
 app.get("/api/etfs", (req, res) => {
-  const db = loadDB(PATH_ETFS, defaultEtfs);
+  const db = loadDB(PATH_ETFS, emptyEtfsDb);
   res.json(db);
 });
 
 app.post("/api/etfs/scrape", async (req, res) => {
   try {
     const scrapedData = await scrapeAllEtfs();
-    const db = loadDB(PATH_ETFS, defaultEtfs);
+    const db = loadDB(PATH_ETFS, emptyEtfsDb);
     
     db.scrapedCategories = scrapedData;
     db.lastScrapedAt = new Date().toISOString();
+    db.globalFlowStatus = "REAL-TIME FLOW CAPTURED";
     
     saveDB(PATH_ETFS, db);
     res.json({ success: true, db });
@@ -1210,38 +1218,26 @@ app.post("/api/etfs/scrape", async (req, res) => {
   }
 });
 
-app.post("/api/etfs/rebalance", (req, res) => {
-  const db = loadDB(PATH_ETFS, defaultEtfs);
-  
-  // Simulated rebalancing logic: fluctuate prices slightly and modify weights to show active state
-  db.etfs = db.etfs.map((etf: any) => {
-    let multiplier = 1 + (Math.random() - 0.5) * 0.04;
-    etf.price = +(etf.price * multiplier).toFixed(2);
-    etf.changeToday = +(etf.changeToday + (Math.random() - 0.5) * 0.6).toFixed(2);
-    etf.rsi = Math.min(99, Math.max(10, +(etf.rsi + (Math.random() - 0.5) * 4).toFixed(2)));
-    etf.alphaScore = Math.min(100, Math.max(10, Math.floor(etf.alphaScore + (Math.random() - 0.5) * 6)));
+app.post("/api/etfs/rebalance", async (req, res) => {
+  try {
+    const scrapedData = await scrapeAllEtfs();
+    const db = loadDB(PATH_ETFS, emptyEtfsDb);
     
-    // adjust holdings weights slightly
-    if (etf.holdings.length > 1) {
-      let total = 0;
-      etf.holdings.forEach((h: any) => {
-        h.weight = +(h.weight + (Math.random() - 0.5) * 0.5).toFixed(1);
-        if (h.weight < 0.5) h.weight = 0.5;
-        total += h.weight;
-      });
-    }
-    return etf;
-  });
-  
-  db.globalFlowStatus = Math.random() > 0.5 ? "REBALANCING COMPLETED" : "HEAVY ASSET ROTATION DETECTED";
-  db.lastUpdated = new Date().toLocaleTimeString() + " UTC";
-  saveDB(PATH_ETFS, db);
-  res.json({ success: true, db });
+    db.scrapedCategories = scrapedData;
+    db.lastScrapedAt = new Date().toISOString();
+    db.globalFlowStatus = "REAL-TIME FLOW REBALANCED";
+    
+    saveDB(PATH_ETFS, db);
+    res.json({ success: true, db });
+  } catch (err: any) {
+    console.error("ETF rebalance failed:", err);
+    res.status(500).json({ error: err.message || "Failed to rebalance ETFs" });
+  }
 });
 
 app.post("/api/etfs/analyze", async (req, res) => {
   const { symbol } = req.body;
-  const db = loadDB(PATH_ETFS, defaultEtfs);
+  const db = loadDB(PATH_ETFS, emptyEtfsDb);
   const etf = db.etfs.find((e: any) => e.symbol === symbol);
 
   if (!etf) {
